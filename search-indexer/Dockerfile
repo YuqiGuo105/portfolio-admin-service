@@ -21,7 +21,7 @@ WORKDIR /app
 
 COPY --from=build /workspace/search-indexer/target/portfolio-search-indexer-*.jar /app/app.jar
 
-ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxRAMPercentage=75 -Djava.net.preferIPv4Stack=true"
+ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxRAMPercentage=75 -Djava.net.preferIPv6Addresses=true"
 EXPOSE 8082
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]
