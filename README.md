@@ -19,6 +19,87 @@ source type normalize their inconsistent shape into `NormalizedContent`.
 
 ---
 
+## Repository layout
+
+This repository contains three Spring Boot services that run as separate
+processes / containers:
+
+| Module                         | Port | Role                                                                            |
+|--------------------------------|------|---------------------------------------------------------------------------------|
+| `.` (portfolio-admin-service)  | 8081 | Admin write API, transactional publish flow, Kafka producer for indexing events |
+| `search-indexer/`              | 8082 | Kafka consumer — upserts/deletes documents in OpenSearch                        |
+| `rag-indexer/`                 | 8083 | Kafka consumer — chunks + OpenAI-embeds content into `kb_documents` (pgvector)  |
+
+All three share the same Supabase Postgres database and the same
+`indexing_jobs` table (admin-service writes rows; the indexers update
+status). Communication between services is Kafka-only — no inter-service
+HTTP calls.
+
+### Kafka topics
+
+| Topic                       | Producer       | Consumer group        | Payload                |
+|-----------------------------|----------------|------------------------|------------------------|
+| `content.search.index.v1`   | admin-service  | `search-indexer-group` | `ContentIndexEvent`    |
+| `content.rag.index.v1`      | admin-service  | `rag-indexer-group`    | `ContentIndexEvent`    |
+
+Event schema (see `src/main/java/site/yuqi/admin/events/ContentIndexEvent.java`):
+
+```json
+{
+  "eventId":        "uuid",
+  "occurredAt":     "2024-01-01T00:00:00Z",
+  "sourceType":     "BLOG | PROJECT | LIFE_BLOG | EXPERIENCE",
+  "sourceId":       "uuid-or-bigint-as-text",
+  "sourceVersion":  3,
+  "indexingJobId":  "uuid",
+  "idempotencyKey": "SEARCH_INDEX:BLOG:<id>:v3",
+  "jobType":        "SEARCH_INDEX | RAG_INDEX"
+}
+```
+
+The Kafka publish happens **after** the DB transaction commits — if Kafka
+is down the `indexing_jobs` row simply stays `PENDING`. A future scheduled
+re-publisher inside admin-service can pick those up and re-send.
+
+### Environment variables (indexers)
+
+Shared:
+- `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`
+- `KAFKA_BOOTSTRAP_SERVERS` (defaults to `localhost:9092`)
+- `KAFKA_SECURITY_PROTOCOL` (`PLAINTEXT` for local, `SASL_SSL` for Aiven Kafka)
+- `KAFKA_SASL_MECHANISM` (`SCRAM-SHA-512` for Aiven)
+- `KAFKA_SASL_JAAS_CONFIG` (`org.apache.kafka.common.security.scram.ScramLoginModule required username="..." password="...";`)
+
+`search-indexer/` additionally:
+- `OPENSEARCH_HOST`, `OPENSEARCH_PORT`, `OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `OPENSEARCH_INDEX`
+
+`rag-indexer/` additionally:
+- `OPENAI_API_KEY` — required
+- `OPENAI_EMBEDDING_MODEL` (defaults to `text-embedding-3-small`, 1536 dims)
+
+### Disable the in-process search worker
+
+The legacy `SearchIndexWorker` in admin-service is now **off by default**
+(`portfolio.opensearch.worker.enabled: false`). To re-enable it (e.g. for
+disaster-recovery without Kafka), set `OPENSEARCH_WORKER_ENABLED=true`.
+
+### Build & run locally
+
+```bash
+# 1. start kafka (single-broker docker-compose) on localhost:9092
+# 2. run each service in its own terminal
+
+mvn -DskipTests spring-boot:run                   # admin-service (8081)
+
+cd search-indexer
+mvn -DskipTests spring-boot:run                   # search-indexer (8082)
+
+cd ../rag-indexer
+OPENAI_API_KEY=sk-... mvn -DskipTests spring-boot:run   # rag-indexer (8083)
+```
+
+---
+
 ## Architecture
 
 ```

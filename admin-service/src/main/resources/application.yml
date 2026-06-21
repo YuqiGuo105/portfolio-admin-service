@@ -1,0 +1,94 @@
+server:
+  port: ${PORT:8081}
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: portfolio-admin-service
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:}
+    username: ${SPRING_DATASOURCE_USERNAME:}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 5
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        format_sql: false
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:PLAIN}
+      # When using SASL_SSL set KAFKA_SASL_JAAS_CONFIG to:
+      #   org.apache.kafka.common.security.scram.ScramLoginModule required username="..." password="...";
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG:}
+    producer:
+      acks: all
+      retries: 5
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        compression.type: lz4
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+portfolio:
+  opensearch:
+    host: ${OPENSEARCH_HOST:os-b4cbaea-yuqi-791c.a.aivencloud.com}
+    port: ${OPENSEARCH_PORT:27099}
+    username: ${OPENSEARCH_USERNAME:avnadmin}
+    password: ${OPENSEARCH_PASSWORD:}
+    index: ${OPENSEARCH_INDEX:portfolio_content_current}
+    auto-create-index: false
+    worker:
+      enabled: ${OPENSEARCH_WORKER_ENABLED:false}    # disabled by default; use portfolio-search-indexer service
+  admin:
+    secret: ${ADMIN_SECRET:}
+    allowed-origins: ${ALLOWED_ORIGINS:http://localhost:3000}
+  supabase:
+    jwt-secret: ${SUPABASE_JWT_SECRET:}
+    allowed-emails: ${ADMIN_ALLOWED_EMAILS:}
+  kafka:
+    topics:
+      search-index: ${KAFKA_TOPIC_SEARCH_INDEX:content.search.index.v1}
+      rag-index:    ${KAFKA_TOPIC_RAG_INDEX:content.rag.index.v1}
+      notification:
+        article-updates: ${KAFKA_TOPIC_NOTIFICATION_ARTICLE:content.notification.article-updates.v1}
+        feature-updates: ${KAFKA_TOPIC_NOTIFICATION_FEATURE:content.notification.feature-updates.v1}
+        job-updates:     ${KAFKA_TOPIC_NOTIFICATION_JOBS:content.notification.job-updates.v1}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    persist-authorization: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    site.yuqi.admin: INFO
+    org.hibernate.SQL: WARN

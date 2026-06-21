@@ -1,0 +1,153 @@
+# docker-compose.yml — Portfolio Platform
+#
+# Usage:
+#   cp .env.example .env        # fill in secrets
+#   docker compose up --build
+#
+# All service images are built from the repo root so each Dockerfile can
+# COPY the shared parent pom.xml.  Set BUILD_TARGET=build to skip tests.
+
+version: "3.9"
+
+# ── Common env snippets (YAML anchors) ──────────────────────────────────────
+x-kafka-client-env: &kafka-client-env
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  KAFKA_SECURITY_PROTOCOL: "PLAINTEXT"
+  KAFKA_SASL_MECHANISM: "PLAIN"
+  KAFKA_SASL_JAAS_CONFIG: ""
+
+x-db-env: &db-env
+  SPRING_DATASOURCE_URL:      "${SPRING_DATASOURCE_URL}"
+  SPRING_DATASOURCE_USERNAME: "${SPRING_DATASOURCE_USERNAME}"
+  SPRING_DATASOURCE_PASSWORD: "${SPRING_DATASOURCE_PASSWORD}"
+
+x-opensearch-env: &opensearch-env
+  OPENSEARCH_HOST:     "${OPENSEARCH_HOST:-os-b4cbaea-yuqi-791c.a.aivencloud.com}"
+  OPENSEARCH_PORT:     "${OPENSEARCH_PORT:-27099}"
+  OPENSEARCH_USERNAME: "${OPENSEARCH_USERNAME:-avnadmin}"
+  OPENSEARCH_PASSWORD: "${OPENSEARCH_PASSWORD}"
+  OPENSEARCH_INDEX:    "${OPENSEARCH_INDEX:-portfolio_content_current}"
+
+# ── Services ─────────────────────────────────────────────────────────────────
+services:
+
+  # ── Kafka (KRaft — no Zookeeper) ──────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka
+    ports:
+      - "9092:9092"   # internal (docker network)
+      - "9093:9093"   # external (localhost)
+    environment:
+      # KRaft mode — single-node
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://0.0.0.0:9093,CONTROLLER://kafka:29093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://localhost:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"   # fixed ID for reproducibility
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  # ── Admin Service (port 8081) ─────────────────────────────────────────────
+  admin-service:
+    build:
+      context: .
+      dockerfile: admin-service/Dockerfile
+    container_name: admin-service
+    ports:
+      - "8081:8081"
+    environment:
+      <<: [*db-env, *kafka-client-env, *opensearch-env]
+      PORT: 8081
+      ADMIN_SECRET:          "${ADMIN_SECRET}"
+      ALLOWED_ORIGINS:       "${ALLOWED_ORIGINS:-http://localhost:3000}"
+      SUPABASE_JWT_SECRET:   "${SUPABASE_JWT_SECRET}"
+      ADMIN_ALLOWED_EMAILS:  "${ADMIN_ALLOWED_EMAILS}"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
+    restart: unless-stopped
+
+  # ── Search Indexer (port 8082) ────────────────────────────────────────────
+  search-indexer:
+    build:
+      context: .
+      dockerfile: search-indexer/Dockerfile
+    container_name: search-indexer
+    ports:
+      - "8082:8082"
+    environment:
+      <<: [*db-env, *kafka-client-env, *opensearch-env]
+      PORT: 8082
+      KAFKA_TOPIC_SEARCH_INDEX: "${KAFKA_TOPIC_SEARCH_INDEX:-content.search.index.v1}"
+      KAFKA_TOPIC_RAG_INDEX:    "${KAFKA_TOPIC_RAG_INDEX:-content.rag.index.v1}"
+      KAFKA_TOPIC_NOTIFICATION_ARTICLE: "${KAFKA_TOPIC_NOTIFICATION_ARTICLE:-content.notification.article-updates.v1}"
+      KAFKA_TOPIC_NOTIFICATION_FEATURE: "${KAFKA_TOPIC_NOTIFICATION_FEATURE:-content.notification.feature-updates.v1}"
+      KAFKA_TOPIC_NOTIFICATION_JOBS:    "${KAFKA_TOPIC_NOTIFICATION_JOBS:-content.notification.job-updates.v1}"
+      KAFKA_CONSUMER_GROUP:     "search-indexer-group"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      admin-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
+    restart: unless-stopped
+
+  # ── RAG Indexer (port 8083) ───────────────────────────────────────────────
+  rag-indexer:
+    build:
+      context: .
+      dockerfile: rag-indexer/Dockerfile
+    container_name: rag-indexer
+    ports:
+      - "8083:8083"
+    environment:
+      <<: [*db-env, *kafka-client-env]
+      PORT: 8083
+      KAFKA_TOPIC_RAG_INDEX: "${KAFKA_TOPIC_RAG_INDEX:-content.rag.index.v1}"
+      KAFKA_CONSUMER_GROUP:  "rag-indexer-group"
+      OPENAI_API_KEY:        "${OPENAI_API_KEY}"
+      OPENAI_EMBEDDING_MODEL: "${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      admin-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
+    restart: unless-stopped
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  kafka-data:
+    driver: local

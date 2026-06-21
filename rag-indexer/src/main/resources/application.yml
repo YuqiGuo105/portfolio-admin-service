@@ -1,0 +1,64 @@
+server:
+  port: ${PORT:8083}
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: portfolio-rag-indexer
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:}
+    username: ${SPRING_DATASOURCE_USERNAME:}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 3
+      connection-timeout: 30000
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:PLAIN}
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG:}
+      spring.json.trusted.packages: "site.yuqi.ragindexer.events,site.yuqi.admin.events,*"
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:rag-indexer-group}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.value.default.type: site.yuqi.ragindexer.events.ContentIndexEvent
+        spring.json.use.type.headers: false
+    listener:
+      ack-mode: MANUAL_IMMEDIATE
+      concurrency: 1   # OpenAI per-request rate matters more than parallelism
+
+portfolio:
+  kafka:
+    topics:
+      rag-index: ${KAFKA_TOPIC_RAG_INDEX:content.rag.index.v1}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+    embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+    embedding-dimensions: 1536
+  rag:
+    chunk:
+      max-chars: ${RAG_CHUNK_MAX_CHARS:2000}    # ~500 tokens
+      overlap-chars: ${RAG_CHUNK_OVERLAP_CHARS:200}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    site.yuqi.ragindexer: INFO
+    org.apache.kafka: WARN

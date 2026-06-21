@@ -3,6 +3,8 @@ package site.yuqi.admin.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import site.yuqi.admin.adapter.ContentAdapter;
 import site.yuqi.admin.adapter.ContentAdapterRegistry;
 import site.yuqi.admin.adapter.NormalizedContent;
@@ -13,6 +15,8 @@ import site.yuqi.admin.domain.IndexingJob;
 import site.yuqi.admin.domain.JobType;
 import site.yuqi.admin.domain.SourceType;
 import site.yuqi.admin.domain.Topic;
+import site.yuqi.admin.events.IndexEventPublisher;
+import site.yuqi.admin.events.NotificationEventPublisher;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +44,8 @@ public class ContentService {
     private final OutboxService outboxService;
     private final IndexingJobService indexingJobService;
     private final AuditLogService auditLogService;
+    private final IndexEventPublisher indexEventPublisher;
+    private final NotificationEventPublisher notificationEventPublisher;
 
     // ----- READS -----------------------------------------------------------
 
@@ -159,11 +165,55 @@ public class ContentService {
         auditLogService.log(actor, AuditAction.PUBLISH, type, sourceId, version.getVersion(),
                 null, adapter.toSnapshot(content));
 
+        // Fire all Kafka events only AFTER the DB transaction commits, so consumers
+        // never see an event for a row that does not yet exist (or that rolled back).
+        // If Kafka is down, indexing_jobs rows stay PENDING (polled later) and
+        // the notification event is simply lost — tolerable because the outbox row
+        // persists and a future outbox relay can re-send.
+        publishAfterCommit(ragJob);
+        publishAfterCommit(searchJob);
+        notifyAfterCommit(content, version.getVersion(), topic);
+
         return PublishResult.builder()
                 .version(version)
                 .outboxEvent(outbox)
                 .ragJob(ragJob)
                 .searchJob(searchJob)
                 .build();
+    }
+
+    /**
+     * Publish a Kafka event for the indexing job, but only after the current
+     * transaction commits successfully.
+     */
+    private void publishAfterCommit(IndexingJob job) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    indexEventPublisher.publish(job);
+                }
+            });
+        } else {
+            indexEventPublisher.publish(job);
+        }
+    }
+
+    /**
+     * Publish a notification event to the notification service topic after commit.
+     * Uses a captured snapshot of {@code content} + version so the lambda does not
+     * close over mutable state.
+     */
+    private void notifyAfterCommit(NormalizedContent content, int version, Topic topic) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    notificationEventPublisher.publish(content, version, topic);
+                }
+            });
+        } else {
+            notificationEventPublisher.publish(content, version, topic);
+        }
     }
 }
