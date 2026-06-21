@@ -21,6 +21,8 @@ spring:
       security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
       sasl.mechanism: ${KAFKA_SASL_MECHANISM:PLAIN}
       sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG:}
+      ssl.truststore.type: ${KAFKA_TRUSTSTORE_TYPE:PEM}
+      ssl.truststore.certificates: ${KAFKA_CA_CERT:}
       spring.json.trusted.packages: "site.yuqi.ragindexer.events,site.yuqi.admin.events,*"
     consumer:
       group-id: ${KAFKA_CONSUMER_GROUP:rag-indexer-group}
