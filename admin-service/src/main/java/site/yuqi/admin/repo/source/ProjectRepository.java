@@ -13,10 +13,10 @@ public interface ProjectRepository extends JpaRepository<Project, UUID> {
 
     @Query("""
         select p from Project p
-        where (:keyword is null or
-               lower(coalesce(p.title,'')) like lower(concat('%', :keyword, '%')) or
-               lower(coalesce(p.content,'')) like lower(concat('%', :keyword, '%')))
-          and (:category is null or p.category = :category)
+        where (cast(:keyword as string) is null or
+               lower(coalesce(p.title,'')) like lower(concat('%', cast(:keyword as string), '%')) or
+               lower(coalesce(p.content,'')) like lower(concat('%', cast(:keyword as string), '%')))
+          and (cast(:category as string) is null or p.category = cast(:category as string))
         order by p.publishedAt desc nulls last
     """)
     List<Project> search(@Param("keyword") String keyword,

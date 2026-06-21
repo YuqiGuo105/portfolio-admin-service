@@ -13,10 +13,10 @@ public interface BlogRepository extends JpaRepository<Blog, UUID> {
 
     @Query("""
         select b from Blog b
-        where (:keyword is null or
-               lower(coalesce(b.title,'')) like lower(concat('%', :keyword, '%')) or
-               lower(coalesce(b.description,'')) like lower(concat('%', :keyword, '%')))
-          and (:category is null or b.category = :category)
+        where (cast(:keyword as string) is null or
+               lower(coalesce(b.title,'')) like lower(concat('%', cast(:keyword as string), '%')) or
+               lower(coalesce(b.description,'')) like lower(concat('%', cast(:keyword as string), '%')))
+          and (cast(:category as string) is null or b.category = cast(:category as string))
         order by coalesce(b.date, '') desc
     """)
     List<Blog> search(@Param("keyword") String keyword,

@@ -12,10 +12,10 @@ public interface ExperienceRepository extends JpaRepository<Experience, Long> {
 
     @Query("""
         select e from Experience e
-        where (:keyword is null or
-               lower(coalesce(e.name,'')) like lower(concat('%', :keyword, '%')) or
-               lower(coalesce(e.subname,'')) like lower(concat('%', :keyword, '%')) or
-               lower(coalesce(e.text,'')) like lower(concat('%', :keyword, '%')))
+        where (cast(:keyword as string) is null or
+               lower(coalesce(e.name,'')) like lower(concat('%', cast(:keyword as string), '%')) or
+               lower(coalesce(e.subname,'')) like lower(concat('%', cast(:keyword as string), '%')) or
+               lower(coalesce(e.text,'')) like lower(concat('%', cast(:keyword as string), '%')))
         order by e.id desc
     """)
     List<Experience> search(@Param("keyword") String keyword, Pageable pageable);
