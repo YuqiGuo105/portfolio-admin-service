@@ -21,7 +21,6 @@ import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 
@@ -98,12 +97,17 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 
     private static SecretKey buildKey(String raw) {
         if (raw == null || raw.isBlank()) return null;
-        byte[] bytes;
-        try {
-            bytes = Base64.getDecoder().decode(raw.trim());
-        } catch (IllegalArgumentException e) {
-            bytes = raw.trim().getBytes(StandardCharsets.UTF_8);
-        }
+        // Supabase signs JWTs using the JWT secret's raw UTF-8 bytes as the
+        // HMAC key (same convention as supabase-js / PostgREST / GoTrue). The
+        // previous "try Base64 decode first, fall back to UTF-8" heuristic
+        // silently corrupted secrets that happened to be valid base64 strings
+        // (e.g. an 88-char secret ending in '==' decodes cleanly to 64 random
+        // bytes but Supabase actually signed with the 88 ASCII bytes), turning
+        // every authenticated request into a 401 invalid_token. Just trust the
+        // raw bytes — if the dashboard hands you a base64-encoded secret, paste
+        // it verbatim and it Just Works because Supabase HMACs the verbatim
+        // characters either way.
+        byte[] bytes = raw.trim().getBytes(StandardCharsets.UTF_8);
         return Keys.hmacShaKeyFor(bytes);
     }
 
