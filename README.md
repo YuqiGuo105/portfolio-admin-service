@@ -13,115 +13,30 @@ only over Kafka — no inter-service HTTP.
 
 ## Architecture
 
-### UML sequence — publish a piece of content
-
-End-to-end happy path when an admin calls `POST /api/admin/content/{sourceType}/{sourceId}/publish`.
-All DB writes happen in one transaction; Kafka publishes fire after commit.
-
 ```mermaid
-sequenceDiagram
-  autonumber
-  actor Admin as Admin
-  participant API as admin-service<br/>REST controller
-  participant SVC as ContentService<br/>(TX boundary)
-  participant PG as Supabase Postgres
-  participant OUT as OutboxRelay<br/>(@TransactionalEventListener<br/>AFTER_COMMIT)
-  participant K as Aiven Kafka
-  participant SI as search-indexer
-  participant RI as rag-indexer
-  participant NS as notification-service
-
-  Admin->>API: POST /publish<br/>(X-Admin-Secret or Supabase JWT)
-  API->>SVC: publish(sourceType, sourceId)
-
-  rect rgb(245, 248, 255)
-    note over SVC,PG: Single DB transaction
-    SVC->>PG: INSERT content_versions (v+1)
-    SVC->>PG: INSERT content_event_outbox (PENDING)
-    SVC->>PG: INSERT indexing_jobs (SEARCH, PENDING)
-    SVC->>PG: INSERT indexing_jobs (RAG, PENDING)
-    SVC->>PG: INSERT content_admin_audit_logs (PUBLISH)
-    PG-->>SVC: COMMIT
-  end
-
-  SVC-->>API: 200 OK { version, jobIds }
-  API-->>Admin: 200 OK
-
-  SVC--)OUT: ApplicationEvent (post-commit)
-  OUT->>K: produce content.search.index.v1
-  OUT->>K: produce content.rag.index.v1
-  OUT->>K: produce content.notification.{article|feature|job}-updates.v1
-  OUT->>PG: UPDATE outbox SET status='SENT'
-
-  par Search fan-out
-    K-->>SI: ContentIndexEvent
-    SI->>PG: SELECT source row
-    SI->>SI: normalize
-    SI->>SI: upsert OpenSearch doc
-    SI->>PG: UPDATE indexing_jobs SET status='DONE'
-  and RAG fan-out
-    K-->>RI: ContentIndexEvent
-    RI->>PG: SELECT source row
-    RI->>RI: chunk (2000/200)
-    RI->>RI: OpenAI embed (1536-dim)
-    RI->>PG: UPSERT kb_documents
-    RI->>PG: UPDATE indexing_jobs SET status='DONE'
-  and Notification fan-out
-    K-->>NS: ContentPublishedEvent
-    NS->>NS: idempotent insert + email fan-out
-  end
-```
-
-### System context
-
-```mermaid
-flowchart LR
-  subgraph Edge["Edge"]
-    UI["Next.js Portfolio<br/>(yuqi.site)"]
-    Admin["Admin console<br/>(curl / Postman / future UI)"]
-  end
-
-  subgraph AdminPlatform["Admin content platform (this repo)"]
-    AS["admin-service<br/>:8081<br/>REST + JPA + outbox"]
-    SI["search-indexer<br/>:8082<br/>Kafka consumer"]
-    RI["rag-indexer<br/>:8083<br/>Kafka consumer"]
-  end
-
-  subgraph Notify["portfolio-notification-service<br/>(separate repo)"]
-    NS["notification-service<br/>:8080"]
-  end
-
-  subgraph Data["Shared data plane"]
-    PG[("Supabase Postgres<br/>(public schema)")]
-    OS[("Aiven OpenSearch")]
+flowchart TB
+    Admin["Admin"]
+    API["admin-service<br/>REST API"]
+    PG[("Supabase Postgres<br/><br/>Source tables:<br/>Blogs · Projects · life_blogs · experience<br/><br/>Platform tables:<br/>content_versions · content_event_outbox<br/>indexing_jobs · content_admin_audit_logs")]
+    Outbox["Outbox Publisher<br/>(post-commit hook)"]
+    K[["Kafka<br/>content events"]]
+    Search["Search Indexer"]
+    RAG["RAG Indexer"]
+    Notif["portfolio-notification-service"]
+    OS[("OpenSearch<br/>portfolio_content_current")]
     PV[("pgvector<br/>kb_documents")]
-  end
+    Email(("Email / Web"))
 
-  subgraph Bus["Aiven Kafka (SASL_SSL / SCRAM-SHA-256)"]
-    T1[["content.search.index.v1"]]
-    T2[["content.rag.index.v1"]]
-    T3[["content.notification.article-updates.v1<br/>content.notification.feature-updates.v1<br/>content.notification.job-updates.v1"]]
-  end
-
-  UI -->|read-only<br/>SELECT| PG
-  Admin -->|X-Admin-Secret<br/>or Supabase JWT| AS
-
-  AS -->|write source rows +<br/>versions + outbox| PG
-  AS -->|produce| T1
-  AS -->|produce| T2
-  AS -->|produce| T3
-
-  T1 --> SI
-  T2 --> RI
-  T3 --> NS
-
-  SI -->|upsert / delete| OS
-  RI -->|chunk + embed| PV
-  RI -.->|read source row| PG
-  SI -.->|read source row| PG
-
-  UI -->|search query| OS
-  UI -->|RAG retrieval| PV
+    Admin --> API
+    API --> PG
+    PG --> Outbox
+    Outbox --> K
+    K --> Search
+    K --> RAG
+    K --> Notif
+    Search --> OS
+    RAG --> PV
+    Notif --> Email
 ```
 
 **Design properties:**
