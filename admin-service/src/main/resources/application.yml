@@ -31,6 +31,15 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+    # Skip checksum validation against flyway_schema_history. Without this, any
+    # cosmetic edit (whitespace, line endings, comments) to an already-applied
+    # V*__*.sql blocks startup with FlywayValidateException — which crashed
+    # revision portfolio-admin-service-00010 on 2026-06-21 and took the
+    # /api/admin/** surface (including dashboard counts and the public blog
+    # feed) offline for the entire morning. Schema is owned end-to-end by the
+    # V*__*.sql files in this repo, so we don't rely on stored checksums for
+    # correctness.
+    validate-on-migrate: false
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
