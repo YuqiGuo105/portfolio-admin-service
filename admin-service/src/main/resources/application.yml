@@ -17,12 +17,15 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
     properties:
       hibernate:
         jdbc:
           time_zone: UTC
         format_sql: false
+        # Preserve case-sensitive PascalCase identifiers like "Blogs" / "Projects"
+        # from the existing Supabase schema (created by the Next.js portfolio app).
+        physical_naming_strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     open-in-view: false
 
   flyway:
