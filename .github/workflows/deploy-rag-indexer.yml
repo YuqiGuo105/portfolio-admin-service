@@ -98,4 +98,9 @@ jobs:
         run: |
           URL=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.url)')
           echo "Service URL: $URL"
-          curl --fail --max-time 30 -H "Authorization: Bearer $(gcloud auth print-identity-token)" "$URL/actuator/health" || (echo "Health check failed"; exit 1)
+          # Verify Cloud Run reports the service as Ready (WIF creds don't support print-identity-token)
+          READY=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" \
+            --format='value(status.conditions[?(@.type=="Ready")].status)' 2>/dev/null)
+          echo "Service Ready status: $READY"
+          [ "$READY" = "True" ] || (echo "Service not ready"; exit 1)
+          echo "Deployment verified: $URL"

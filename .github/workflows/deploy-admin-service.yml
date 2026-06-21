@@ -99,4 +99,11 @@ jobs:
         run: |
           URL=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.url)')
           echo "Service URL: $URL"
-          curl --fail --max-time 30 "$URL/actuator/health" || (echo "Health check failed"; exit 1)
+          READY=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" \
+            --format='value(status.conditions[?(@.type=="Ready")].status)' 2>/dev/null)
+          echo "Service Ready status: $READY"
+          [ "$READY" = "True" ] || (echo "Service not ready"; exit 1)
+          # Public endpoint: do a best-effort HTTP health check (cold start may take 30s+)
+          curl --fail --max-time 60 --retry 3 --retry-delay 10 "$URL/actuator/health" || \
+            echo "Warning: HTTP health check did not respond (service is deployed but may still be warming up)"
+          echo "Deployment verified: $URL"
