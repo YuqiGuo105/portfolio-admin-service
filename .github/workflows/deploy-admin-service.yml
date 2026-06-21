@@ -99,18 +99,20 @@ jobs:
         run: |
           URL=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.url)')
           echo "Service URL: $URL"
-          # Poll Ready condition for up to ~3 minutes (cold start + JPA init can take 20-60s).
-          READY=""
+          # Poll: the just-created revision must become the latestReadyRevision.
+          # (gcloud's value() projection doesn't support the JSONPath bracket-filter
+          # syntax for status.conditions[?(@.type=="Ready")], so we compare revision
+          # names instead.)
+          LATEST=""; READY=""
           for i in $(seq 1 18); do
-            READY=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" \
-              --format='value(status.conditions[?(@.type=="Ready")].status)' 2>/dev/null)
-            echo "Attempt $i: Ready=${READY:-<empty>}"
-            [ "$READY" = "True" ] && break
-            [ "$READY" = "False" ] && (echo "Service Ready=False, aborting"; exit 1)
+            LATEST=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.latestCreatedRevisionName)' 2>/dev/null)
+            READY=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.latestReadyRevisionName)' 2>/dev/null)
+            echo "Attempt $i: latest=${LATEST:-<empty>} ready=${READY:-<empty>}"
+            [ -n "$READY" ] && [ "$LATEST" = "$READY" ] && break
             sleep 10
           done
-          [ "$READY" = "True" ] || (echo "Service not ready after polling"; exit 1)
+          [ -n "$READY" ] && [ "$LATEST" = "$READY" ] || (echo "Latest revision did not become Ready in time"; exit 1)
           # Public endpoint: do a best-effort HTTP health check (cold start may take 30s+)
           curl --fail --max-time 60 --retry 3 --retry-delay 10 "$URL/actuator/health" || \
             echo "Warning: HTTP health check did not respond (service is deployed but may still be warming up)"
-          echo "Deployment verified: $URL"
+          echo "Deployment verified: $URL (revision $READY)"
