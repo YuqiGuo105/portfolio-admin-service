@@ -162,8 +162,36 @@ three `content.notification.*.v1` topics is tracked in that repo.)
 
 ## REST API (admin-service)
 
-Auth: **`X-Admin-Secret: <secret>`** _or_ **`Authorization: Bearer <Supabase JWT>`**
-(with `email` claim present in `ADMIN_ALLOWED_EMAILS`).
+**Dual auth channel** — pick the credential that fits your caller:
+
+| Channel | Header | Used by | Status |
+|---------|--------|---------|--------|
+| **Primary (browser)** | `Authorization: Bearer <Supabase JWT>` | Portfolio admin panel (`/admin/*` pages) and Mr. Pot chat widget. Sign in at <https://www.yuqi.site> → the JWT is `(await supabase.auth.getSession()).data.session.access_token`. Email must be in `ADMIN_ALLOWED_EMAILS`. | Preferred |
+| **Fallback (server-to-server)** | `X-Admin-Secret: <secret>` | Internal scripts, CI smoke tests, server-side jobs. Value must equal the `ADMIN_SECRET` env var. | Use only when a JWT is not available |
+
+Error responses use the structured `ApiError` shape so the frontend can react:
+
+| Status | `error` code | Meaning |
+|--------|--------------|---------|
+| 401    | `missing_credentials` | Neither header supplied → UI should redirect to the Portfolio Supabase login. |
+| 401    | `invalid_token`       | Bearer JWT failed signature/expiry, or `X-Admin-Secret` mismatched → UI should clear the session and re-prompt. |
+| 403    | `forbidden_email`     | JWT was valid but email is not in `ADMIN_ALLOWED_EMAILS` → UI should show "your account is not authorised". |
+
+**Swagger UI** at `/swagger-ui.html` is whitelisted (no filter) so humans can
+log in there: click **Authorize**, pick `BearerAuth`, paste `Bearer <token>`.
+
+### Where these endpoints surface in the Portfolio
+
+| Admin feature              | Portfolio admin page              | Chat widget MCP tool (Mr. Pot)        |
+|----------------------------|-----------------------------------|---------------------------------------|
+| List / create / update blog content | `/admin/blogs`, `/admin/blogs/new`, `/admin/blogs/[id]` | `content.list`, `content.create`, `content.update` |
+| List / edit life blogs     | `/admin/life-blogs/*`             | `content.list`, `content.update` |
+| List / edit projects       | `/admin/projects/*`               | `content.list`, `content.update` |
+| Publish + emit content event | (publish button on editor pages) | `content.publish` |
+| Re-index a doc (RAG / search) | (re-index button on editor pages) | `content.reindex` |
+| Inspect indexing jobs      | `/admin` quick-action card → admin-service Swagger | `job.list`, `job.retry` |
+| Inspect outbox events      | (Swagger UI)                      | `outbox.list` |
+| Audit log                  | (Swagger UI)                      | `audit.list` |
 
 | Method | Path                                                              | Purpose                                                              |
 |--------|-------------------------------------------------------------------|----------------------------------------------------------------------|
