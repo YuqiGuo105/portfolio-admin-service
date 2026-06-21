@@ -98,9 +98,15 @@ jobs:
         run: |
           URL=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.url)')
           echo "Service URL: $URL"
-          # Verify Cloud Run reports the service as Ready (WIF creds don't support print-identity-token)
-          READY=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" \
-            --format='value(status.conditions[?(@.type=="Ready")].status)' 2>/dev/null)
-          echo "Service Ready status: $READY"
-          [ "$READY" = "True" ] || (echo "Service not ready"; exit 1)
+          # Poll Ready condition for up to ~3 minutes (WIF creds don't support print-identity-token)
+          READY=""
+          for i in $(seq 1 18); do
+            READY=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" \
+              --format='value(status.conditions[?(@.type=="Ready")].status)' 2>/dev/null)
+            echo "Attempt $i: Ready=${READY:-<empty>}"
+            [ "$READY" = "True" ] && break
+            [ "$READY" = "False" ] && (echo "Service Ready=False, aborting"; exit 1)
+            sleep 10
+          done
+          [ "$READY" = "True" ] || (echo "Service not ready after polling"; exit 1)
           echo "Deployment verified: $URL"

@@ -25,20 +25,17 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ConsumerFactory<String, ContentIndexEvent> consumerFactory(KafkaProperties props) {
+        // Configure ErrorHandlingDeserializer wrapping JsonDeserializer entirely via properties.
+        // Do NOT mix property-based config with setter-based config on JsonDeserializer:
+        // it throws "JsonDeserializer must be configured with property setters, or via configuration
+        // properties; not both". The spring.json.* keys come from application.yml.
         Map<String, Object> cfg = props.buildConsumerProperties();
         cfg.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
         cfg.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
         cfg.put(ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS,
                 org.apache.kafka.common.serialization.StringDeserializer.class);
         cfg.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class);
-
-        JsonDeserializer<ContentIndexEvent> value = new JsonDeserializer<>(ContentIndexEvent.class, false);
-        value.addTrustedPackages("*");
-        value.setUseTypeMapperForKey(false);
-
-        return new DefaultKafkaConsumerFactory<>(cfg,
-                new org.apache.kafka.common.serialization.StringDeserializer(),
-                new ErrorHandlingDeserializer<>(value));
+        return new DefaultKafkaConsumerFactory<>(cfg);
     }
 
     @Bean
