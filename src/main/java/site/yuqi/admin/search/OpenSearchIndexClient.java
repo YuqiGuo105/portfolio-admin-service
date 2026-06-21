@@ -41,8 +41,17 @@ public class OpenSearchIndexClient implements SearchIndexClient {
 
     private final RestHighLevelClient client;
 
-    @Value("${portfolio.opensearch.index:portfolio_content}")
+    @Value("${portfolio.opensearch.index:portfolio_content_current}")
     private String indexName;
+
+    /**
+     * When {@code true} (default {@code false}), the client will create the index
+     * with its default mappings on first write. Production should keep this
+     * {@code false} so the backfill script (or DevOps) owns the index/alias
+     * lifecycle.
+     */
+    @Value("${portfolio.opensearch.auto-create-index:false}")
+    private boolean autoCreateIndex;
 
     @Override
     public void upsertDocument(String documentId, Map<String, Object> document) {
@@ -75,6 +84,10 @@ public class OpenSearchIndexClient implements SearchIndexClient {
 
     private void ensureIndex() {
         if (indexChecked) return;
+        if (!autoCreateIndex) {
+            indexChecked = true;
+            return;
+        }
         synchronized (this) {
             if (indexChecked) return;
             try {

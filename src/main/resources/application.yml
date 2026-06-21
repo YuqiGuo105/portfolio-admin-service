@@ -35,7 +35,7 @@ portfolio:
     port: ${OPENSEARCH_PORT:27099}
     username: ${OPENSEARCH_USERNAME:avnadmin}
     password: ${OPENSEARCH_PASSWORD:}
-    index: ${OPENSEARCH_INDEX:portfolio_content}
+    index: ${OPENSEARCH_INDEX:portfolio_content_current}
     locations: classpath:db/migration
 
 portfolio:
