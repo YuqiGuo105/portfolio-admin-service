@@ -28,7 +28,6 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
-    repair-on-migration-checksum-mismatch: true
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
