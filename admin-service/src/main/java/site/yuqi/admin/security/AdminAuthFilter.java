@@ -1,6 +1,7 @@
 package site.yuqi.admin.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.Jwts;
@@ -64,7 +65,10 @@ import java.util.Set;
 @Component
 public class AdminAuthFilter extends OncePerRequestFilter {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    // Register JavaTimeModule so we can serialize the Instant timestamp on ApiError.
+    // A bare new ObjectMapper() throws InvalidDefinitionException on java.time.Instant,
+    // which previously turned every 401/403 from this filter into a Spring-default 500.
+    private static final ObjectMapper MAPPER = new ObjectMapper().registerModule(new JavaTimeModule());
 
     private static final Set<String> PUBLIC_PREFIXES = Set.of(
             "/api/health",
