@@ -15,3 +15,6 @@ target/
 *.log
 HELP.md
 .venv/
+
+# Local one-off migration/backfill scripts — keep out of the remote repo
+scripts/backfill_search_terms.py

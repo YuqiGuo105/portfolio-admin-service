@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import site.yuqi.searchindexer.events.ContentIndexEvent;
 import site.yuqi.searchindexer.jobs.IndexingJobUpdater;
 import site.yuqi.searchindexer.opensearch.OpenSearchIndexClient;
+import site.yuqi.searchindexer.enrich.SearchTermsGenerator;
 import site.yuqi.searchindexer.source.ContentFetcher;
 
 import java.util.Map;
@@ -34,6 +35,7 @@ public class SearchIndexConsumer {
     private final IndexingJobUpdater jobs;
     private final ContentFetcher fetcher;
     private final OpenSearchIndexClient openSearch;
+    private final SearchTermsGenerator searchTerms;
 
     @KafkaListener(
             topics = "${portfolio.kafka.topics.search-index}",
@@ -70,7 +72,18 @@ public class SearchIndexConsumer {
             if (doc.isEmpty()) {
                 openSearch.delete(documentId);
             } else {
-                openSearch.upsert(documentId, doc.get());
+                Map<String, Object> document = doc.get();
+                // Document expansion (doc2query): one cheap chat call per document
+                // populates `search_terms` for BM25 recall. Fail-open — an empty
+                // result just means the document is indexed without expansion.
+                String terms = searchTerms.generate(
+                        str(document.get("title")),
+                        str(document.get("summary")),
+                        str(document.get("body")));
+                if (terms != null && !terms.isBlank()) {
+                    document.put("search_terms", terms);
+                }
+                openSearch.upsert(documentId, document);
             }
 
             jobs.markDone(jobId);
@@ -84,5 +97,9 @@ public class SearchIndexConsumer {
         } finally {
             ack.acknowledge();
         }
+    }
+
+    private static String str(Object o) {
+        return o == null ? null : o.toString();
     }
 }
