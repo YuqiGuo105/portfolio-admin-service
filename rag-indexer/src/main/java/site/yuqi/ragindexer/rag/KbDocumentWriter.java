@@ -45,8 +45,7 @@ public class KbDocumentWriter {
 
         jdbc.update("""
                 UPDATE public.kb_documents
-                   SET metadata = jsonb_set(metadata, '{status}', '"SUPERSEDED"'),
-                       updated_at = CURRENT_TIMESTAMP
+                   SET metadata = jsonb_set(metadata, '{status}', '"SUPERSEDED"')
                  WHERE metadata->>'source_type' = ?
                    AND metadata->>'source_id'   = ?
                    AND metadata->>'status'      = 'ACTIVE'
@@ -65,10 +64,9 @@ public class KbDocumentWriter {
             }
 
             jdbc.update("""
-                    INSERT INTO public.kb_documents (doc_type, content, embedding, metadata)
-                    VALUES (?, ?, ?::vector, ?::jsonb)
+                    INSERT INTO public.kb_documents (content, embedding, metadata)
+                    VALUES (?, ?::vector, ?::jsonb)
                     """,
-                    source.getSourceType(),
                     chunk,
                     vector,
                     metadataJson);
@@ -82,8 +80,7 @@ public class KbDocumentWriter {
     public void supersedeAll(String sourceType, String sourceId) throws DataAccessException {
         jdbc.update("""
                 UPDATE public.kb_documents
-                   SET metadata = jsonb_set(metadata, '{status}', '"SUPERSEDED"'),
-                       updated_at = CURRENT_TIMESTAMP
+                   SET metadata = jsonb_set(metadata, '{status}', '"SUPERSEDED"')
                  WHERE metadata->>'source_type' = ?
                    AND metadata->>'source_id'   = ?
                    AND metadata->>'status'      = 'ACTIVE'
