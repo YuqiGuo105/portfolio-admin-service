@@ -7,8 +7,8 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 import site.yuqi.ragindexer.events.ContentIndexEvent;
+import site.yuqi.ragindexer.gemini.GeminiEmbeddingClient;
 import site.yuqi.ragindexer.jobs.IndexingJobUpdater;
-import site.yuqi.ragindexer.openai.OpenAiEmbeddingClient;
 import site.yuqi.ragindexer.rag.ContentChunker;
 import site.yuqi.ragindexer.rag.KbDocumentWriter;
 import site.yuqi.ragindexer.source.ContentFetcher;
@@ -24,7 +24,7 @@ import java.util.UUID;
  *   1. Mark indexing_jobs row PROCESSING
  *   2. Fetch source row (or supersede all kb_documents if it was deleted)
  *   3. Chunk content text
- *   4. Embed each chunk via OpenAI
+ *   4. Embed each chunk via Gemini
  *   5. Mark previously-ACTIVE chunks SUPERSEDED + insert new ACTIVE chunks (one tx)
  *   6. Mark indexing_jobs row DONE (or FAILED on exception)
  *   7. Manually ack the Kafka offset.
@@ -37,7 +37,7 @@ public class RagIndexConsumer {
     private final IndexingJobUpdater jobs;
     private final ContentFetcher fetcher;
     private final ContentChunker chunker;
-    private final OpenAiEmbeddingClient embedder;
+    private final GeminiEmbeddingClient embedder;
     private final KbDocumentWriter writer;
 
     @KafkaListener(

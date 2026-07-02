@@ -11,7 +11,7 @@ import java.time.Duration;
 public class RestTemplateConfig {
 
     @Bean
-    public RestTemplate openAiRestTemplate(RestTemplateBuilder builder) {
+    public RestTemplate geminiRestTemplate(RestTemplateBuilder builder) {
         return builder
                 .setConnectTimeout(Duration.ofSeconds(10))
                 .setReadTimeout(Duration.ofSeconds(60))

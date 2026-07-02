@@ -35,17 +35,18 @@ spring:
         spring.json.use.type.headers: false
     listener:
       ack-mode: MANUAL_IMMEDIATE
-      concurrency: 1   # OpenAI per-request rate matters more than parallelism
+      concurrency: 1   # embedding per-request rate matters more than parallelism
 
 portfolio:
   kafka:
     topics:
       rag-index: ${KAFKA_TOPIC_RAG_INDEX:content.rag.index.v1}
-  openai:
-    api-key: ${OPENAI_API_KEY:}
-    base-url: ${OPENAI_BASE_URL:https://api.openai.com}
-    embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
+    embedding-model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-001}
     embedding-dimensions: 1536
+    task-type: ${GEMINI_TASK_TYPE:RETRIEVAL_DOCUMENT}
   rag:
     chunk:
       max-chars: ${RAG_CHUNK_MAX_CHARS:2000}    # ~500 tokens
