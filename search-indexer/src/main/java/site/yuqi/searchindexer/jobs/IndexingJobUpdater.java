@@ -6,7 +6,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 /**
@@ -20,21 +21,30 @@ public class IndexingJobUpdater {
 
     private final JdbcTemplate jdbc;
 
+    // PostgreSQL JDBC (42.x) does not know how to bind a java.time.Instant
+    // as a positional parameter — Postgres has no dedicated Instant type, so
+    // pgjdbc raises "Can't infer the SQL type to use for an instance of
+    // java.time.Instant". OffsetDateTime maps naturally to timestamptz.
+    private static OffsetDateTime nowUtc() {
+        return OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
     @Transactional
     public void markProcessing(UUID id) {
+        OffsetDateTime now = nowUtc();
         int rows = jdbc.update("""
                 UPDATE public.indexing_jobs
                    SET status = 'PROCESSING',
                        started_at = ?,
                        updated_at = ?
                  WHERE id = ?
-                """, Instant.now(), Instant.now(), id);
+                """, now, now, id);
         if (rows == 0) log.warn("indexing_jobs row not found for id={}", id);
     }
 
     @Transactional
     public void markDone(UUID id) {
-        Instant now = Instant.now();
+        OffsetDateTime now = nowUtc();
         jdbc.update("""
                 UPDATE public.indexing_jobs
                    SET status = 'DONE',
@@ -47,7 +57,7 @@ public class IndexingJobUpdater {
 
     @Transactional
     public void markFailed(UUID id, String error) {
-        Instant now = Instant.now();
+        OffsetDateTime now = nowUtc();
         String truncated = error == null ? null : error.substring(0, Math.min(error.length(), 1000));
         jdbc.update("""
                 UPDATE public.indexing_jobs

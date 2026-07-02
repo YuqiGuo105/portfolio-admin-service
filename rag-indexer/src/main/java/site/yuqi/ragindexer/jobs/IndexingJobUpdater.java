@@ -6,7 +6,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 /** Same shape as the search-indexer version — updates the shared indexing_jobs table. */
@@ -17,9 +18,16 @@ public class IndexingJobUpdater {
 
     private final JdbcTemplate jdbc;
 
+    // pgjdbc cannot bind java.time.Instant as a positional parameter (see the
+    // search-indexer copy of this class for the full error). OffsetDateTime is
+    // the recommended timestamptz binding for Postgres.
+    private static OffsetDateTime nowUtc() {
+        return OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
     @Transactional
     public void markProcessing(UUID id) {
-        Instant now = Instant.now();
+        OffsetDateTime now = nowUtc();
         int rows = jdbc.update("""
                 UPDATE public.indexing_jobs
                    SET status = 'PROCESSING',
@@ -32,7 +40,7 @@ public class IndexingJobUpdater {
 
     @Transactional
     public void markDone(UUID id) {
-        Instant now = Instant.now();
+        OffsetDateTime now = nowUtc();
         jdbc.update("""
                 UPDATE public.indexing_jobs
                    SET status = 'DONE',
@@ -45,7 +53,7 @@ public class IndexingJobUpdater {
 
     @Transactional
     public void markFailed(UUID id, String error) {
-        Instant now = Instant.now();
+        OffsetDateTime now = nowUtc();
         String truncated = error == null ? null : error.substring(0, Math.min(error.length(), 1000));
         jdbc.update("""
                 UPDATE public.indexing_jobs
