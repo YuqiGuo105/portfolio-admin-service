@@ -1,0 +1,98 @@
+// Grafana Alloy configuration for scraping Portfolio Platform microservices.
+// Alloy is the successor to Grafana Agent — it ships metrics to Grafana Cloud.
+//
+// Cloud Run services expose /actuator/prometheus on their internal port.
+// This config is used by a dedicated "metrics-scraper" Cloud Run service
+// (or local Docker container) that has access to all service URLs.
+
+// ─── Prometheus remote-write to Grafana Cloud ─────────────────────────────────
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_PROMETHEUS_URL")  // e.g. https://prometheus-prod-xx.grafana.net/api/prom/push
+
+    basic_auth {
+      username = env("GRAFANA_PROMETHEUS_USER")  // numeric user ID from Grafana Cloud
+      password = env("GRAFANA_API_KEY")          // Grafana Cloud API key (MetricsPublisher role)
+    }
+  }
+}
+
+// ─── Service discovery: static targets ────────────────────────────────────────
+// In Cloud Run, services communicate via their .run.app URLs or internal URLs.
+// Replace with actual Cloud Run URLs or use service mesh.
+
+prometheus.scrape "portfolio_services" {
+  targets = [
+    // notification-service (Cloud Run: us-central1)
+    {
+      "__address__" = env("NOTIFICATION_SERVICE_URL"),
+      "job"        = "portfolio-notification-service",
+      "instance"   = "cloud-run",
+    },
+    // admin-service (Cloud Run)
+    {
+      "__address__" = env("ADMIN_SERVICE_URL"),
+      "job"        = "portfolio-admin-service",
+      "instance"   = "cloud-run",
+    },
+    // search-indexer (Cloud Run)
+    {
+      "__address__" = env("SEARCH_INDEXER_URL"),
+      "job"        = "portfolio-search-indexer",
+      "instance"   = "cloud-run",
+    },
+    // rag-indexer (Cloud Run)
+    {
+      "__address__" = env("RAG_INDEXER_URL"),
+      "job"        = "portfolio-rag-indexer",
+      "instance"   = "cloud-run",
+    },
+    // agent-service (Cloud Run)
+    {
+      "__address__" = env("AGENT_SERVICE_URL"),
+      "job"        = "portfolio-agent-service",
+      "instance"   = "cloud-run",
+    },
+    // mcp-gateway (Cloud Run)
+    {
+      "__address__" = env("MCP_GATEWAY_URL"),
+      "job"        = "portfolio-mcp-gateway",
+      "instance"   = "cloud-run",
+    },
+    // analytics-aggregator (Cloud Run)
+    {
+      "__address__" = env("AGGREGATOR_SERVICE_URL"),
+      "job"        = "analytics-aggregator-service",
+      "instance"   = "cloud-run",
+    },
+    // analytics-alerts (Cloud Run)
+    {
+      "__address__" = env("ALERTS_SERVICE_URL"),
+      "job"        = "analytics-alerts-service",
+      "instance"   = "cloud-run",
+    },
+  ]
+
+  // Cloud Run services expose actuator on their main port
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+// ─── Loki (logs) — push to Grafana Cloud ──────────────────────────────────────
+// Cloud Run logs go to Cloud Logging by default. To also send to Grafana Cloud
+// Loki, you can use a log router or this Alloy loki.write component for
+// local Docker dev.
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_LOKI_URL")  // e.g. https://logs-prod-xx.grafana.net/loki/api/v1/push
+
+    basic_auth {
+      username = env("GRAFANA_LOKI_USER")
+      password = env("GRAFANA_API_KEY")
+    }
+  }
+}
