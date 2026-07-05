@@ -15,28 +15,84 @@ only over Kafka — no inter-service HTTP.
 
 ```mermaid
 flowchart TB
-    Admin["Admin"]
-    API["admin-service<br/>REST API"]
-    PG[("Supabase Postgres<br/><br/>Source tables:<br/>Blogs · Projects · life_blogs · experience<br/><br/>Platform tables:<br/>content_versions · content_event_outbox<br/>indexing_jobs · content_admin_audit_logs")]
-    Outbox["Outbox Publisher<br/>(post-commit hook)"]
-    K[["Kafka<br/>content events"]]
-    Search["Search Indexer"]
-    RAG["RAG Indexer"]
-    Notif["portfolio-notification-service"]
-    OS[("OpenSearch<br/>portfolio_content_current")]
-    PV[("pgvector<br/>kb_documents")]
-    Email(("Email / Web"))
+    %% ================= External =================
+    Admin(["👤 Admin / MCP Gateway"])
 
-    Admin --> API
-    API --> PG
-    PG --> Outbox
-    Outbox --> K
-    K --> Search
-    K --> RAG
-    K --> Notif
-    Search --> OS
-    RAG --> PV
-    Notif --> Email
+    %% ================= Admin Service =================
+    subgraph ADMIN_SVC["☕ admin-service :8081"]
+        API["🌐 Content REST API\n/api/admin/content/**\nCRUD · publish · reindex"]
+        AUTH["🔐 AdminAuthFilter\nSupabase JWT + X-Admin-Secret\nADMIN_ALLOWED_EMAILS gating"]
+        SVC["⚙️ ContentService\noptimistic concurrency\nversion snapshot · audit log"]
+        OUTBOX["📤 Outbox Publisher\npost-commit hook\nasync Kafka produce"]
+    end
+
+    %% ================= Persistence =================
+    PG@{ shape: cyl, label: "🐘 Supabase Postgres\n\nSource tables:\nBlogs · Projects · life_blogs · experience\n\nPlatform tables:\ncontent_versions · content_event_outbox\nindexing_jobs · content_admin_audit_logs" }
+
+    %% ================= Kafka =================
+    K_SEARCH@{ shape: das, label: "🟣 Kafka\ncontent.search.index.v1" }
+    K_RAG@{ shape: das, label: "🟣 Kafka\ncontent.rag.index.v1" }
+    K_NOTIF@{ shape: das, label: "🟣 Kafka\ncontent.notification.*.v1" }
+
+    %% ================= Search Indexer =================
+    subgraph SEARCH_SVC["🔍 search-indexer :8082"]
+        SEARCH_CONSUMER["📥 KafkaListener\nsearch-indexer-group"]
+        DOC2QUERY["✨ Gemini doc2query\nexpand terms"]
+        OS_WRITER["📝 OpenSearch Upsert\nidempotencyKey dedup"]
+    end
+
+    OPENSEARCH@{ shape: cyl, label: "🔎 OpenSearch\nportfolio_content_current" }
+
+    %% ================= RAG Indexer =================
+    subgraph RAG_SVC["🧩 rag-indexer :8083"]
+        RAG_CONSUMER["📥 KafkaListener\nrag-indexer-group"]
+        CHUNKER["✂️ Sliding-window Chunker\n2000 chars / 200 overlap"]
+        EMBEDDER["✨ OpenAI Embeddings\ntext-embedding-3-small · 1536d"]
+    end
+
+    RAG_DB@{ shape: cyl, label: "🐘 Supabase pgvector\nkb_documents · ACTIVE chunks" }
+
+    %% ================= Notification =================
+    NOTIF["🔔 portfolio-notification-service"]
+
+    %% ================= Connections =================
+    Admin --> AUTH
+    AUTH --> API
+    API --> SVC
+    SVC --> PG
+    PG --> OUTBOX
+    OUTBOX --> K_SEARCH
+    OUTBOX --> K_RAG
+    OUTBOX --> K_NOTIF
+
+    K_SEARCH --> SEARCH_CONSUMER
+    SEARCH_CONSUMER --> DOC2QUERY
+    DOC2QUERY --> OS_WRITER
+    OS_WRITER --> OPENSEARCH
+    SEARCH_CONSUMER -.->|fetch source doc| PG
+
+    K_RAG --> RAG_CONSUMER
+    RAG_CONSUMER --> CHUNKER
+    CHUNKER --> EMBEDDER
+    EMBEDDER --> RAG_DB
+    RAG_CONSUMER -.->|fetch source doc| PG
+
+    K_NOTIF --> NOTIF
+
+    %% ================= Styles =================
+    classDef service fill:#ffffff,stroke:#334155,stroke-width:1.2px,color:#0f172a
+    classDef database fill:#eff6ff,stroke:#2563eb,stroke-width:1.4px,color:#1e3a8a
+    classDef kafka fill:#faf5ff,stroke:#7c3aed,stroke-width:1.5px,color:#4c1d95
+    classDef external fill:#f9fafb,stroke:#6b7280,stroke-width:1.1px,color:#111827
+
+    class API,AUTH,SVC,OUTBOX,SEARCH_CONSUMER,DOC2QUERY,OS_WRITER,RAG_CONSUMER,CHUNKER,EMBEDDER service
+    class PG,OPENSEARCH,RAG_DB database
+    class K_SEARCH,K_RAG,K_NOTIF kafka
+    class Admin,NOTIF external
+
+    style ADMIN_SVC fill:#fffbeb,stroke:#d97706,stroke-width:2px,color:#78350f
+    style SEARCH_SVC fill:#ecfdf5,stroke:#059669,stroke-width:2px,color:#064e3b
+    style RAG_SVC fill:#f5f3ff,stroke:#8b5cf6,stroke-width:2px,color:#4c1d95
 ```
 
 **Design properties:**
