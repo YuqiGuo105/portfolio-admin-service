@@ -88,9 +88,10 @@ jobs:
             --allow-unauthenticated \
             --port=8081 \
             --min-instances=0 \
-            --max-instances=2 \
+            --max-instances=1 \
             --memory=512Mi \
             --cpu=1 \
+            --cpu-throttling \
             --timeout=60 \
             --set-env-vars="^|^KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BROKERS}|KAFKA_SECURITY_PROTOCOL=SASL_SSL|KAFKA_SASL_MECHANISM=SCRAM-SHA-256|KAFKA_TRUSTSTORE_TYPE=PEM|KAFKA_SASL_JAAS_CONFIG=${JAAS}|KAFKA_TOPIC_SEARCH_INDEX=content.search.index.v1|KAFKA_TOPIC_RAG_INDEX=content.rag.index.v1|KAFKA_TOPIC_NOTIFICATION_ARTICLE=content.notification.article-updates.v1|KAFKA_TOPIC_NOTIFICATION_FEATURE=content.notification.feature-updates.v1|KAFKA_TOPIC_NOTIFICATION_JOBS=content.notification.job-updates.v1|OPENSEARCH_HOST=os-b4cbaea-yuqi-791c.a.aivencloud.com|OPENSEARCH_PORT=27099|OPENSEARCH_USERNAME=avnadmin|ALLOWED_ORIGINS=${{ vars.ALLOWED_ORIGINS }}" \
             --update-secrets="SPRING_DATASOURCE_URL=SPRING_DATASOURCE_URL:latest,SPRING_DATASOURCE_USERNAME=SPRING_DATASOURCE_USERNAME:latest,SPRING_DATASOURCE_PASSWORD=SPRING_DATASOURCE_PASSWORD:latest,OPENSEARCH_PASSWORD=OPENSEARCH_PASSWORD:latest,KAFKA_CA_CERT=KAFKA_CA_CERT:latest,SUPABASE_JWT_SECRET=SUPABASE_JWT_SECRET:latest,ADMIN_SECRET=ADMIN_SECRET:latest,ADMIN_ALLOWED_EMAILS=ADMIN_ALLOWED_EMAILS:latest"

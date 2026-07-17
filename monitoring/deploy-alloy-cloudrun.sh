@@ -44,8 +44,9 @@ gcloud run deploy "${SERVICE_NAME}" \
   --no-allow-unauthenticated \
   --memory 256Mi \
   --cpu 1 \
-  --min-instances 1 \
+  --min-instances 0 \
   --max-instances 1 \
+  --cpu-throttling \
   --set-env-vars "\
 GRAFANA_PROMETHEUS_URL=${GRAFANA_PROMETHEUS_URL},\
 GRAFANA_PROMETHEUS_USER=${GRAFANA_PROMETHEUS_USER},\
