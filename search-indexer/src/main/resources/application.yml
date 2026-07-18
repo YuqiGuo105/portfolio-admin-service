@@ -39,8 +39,8 @@ spring:
 
 portfolio:
   opensearch:
-    host: ${OPENSEARCH_HOST:os-b4cbaea-yuqi-791c.a.aivencloud.com}
-    port: ${OPENSEARCH_PORT:27099}
+    host: ${OPENSEARCH_HOST:localhost}
+    port: ${OPENSEARCH_PORT:9200}
     username: ${OPENSEARCH_USERNAME:avnadmin}
     password: ${OPENSEARCH_PASSWORD:}
     index:    ${OPENSEARCH_INDEX:portfolio_content_current}

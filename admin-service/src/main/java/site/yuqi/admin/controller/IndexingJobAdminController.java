@@ -16,6 +16,7 @@ import site.yuqi.admin.domain.IndexingJob;
 import site.yuqi.admin.domain.JobStatus;
 import site.yuqi.admin.domain.JobType;
 import site.yuqi.admin.domain.SourceType;
+import site.yuqi.admin.events.IndexEventPublisher;
 import site.yuqi.admin.security.AdminPrincipal;
 import site.yuqi.admin.service.AuditLogService;
 import site.yuqi.admin.service.IndexingJobService;
@@ -31,6 +32,7 @@ public class IndexingJobAdminController {
 
     private final IndexingJobService indexingJobService;
     private final AuditLogService auditLogService;
+    private final IndexEventPublisher indexEventPublisher;
 
     @GetMapping
     @Operation(summary = "List indexing jobs")
@@ -58,6 +60,7 @@ public class IndexingJobAdminController {
         auditLogService.log(AdminPrincipal.from(req), AuditAction.RETRY_INDEXING_JOB,
                 type, job.getSourceIdText(), job.getSourceVersion(),
                 null, Map.of("jobId", jobId.toString(), "jobType", job.getJobType().name()));
+        indexEventPublisher.publish(job);
         return ResponseEntity.ok(job);
     }
 }

@@ -16,8 +16,8 @@ import org.springframework.context.annotation.Configuration;
  * Credentials are injected via environment variables — never hardcoded.
  *
  * Required env vars:
- *   OPENSEARCH_HOST     — e.g. os-b4cbaea-yuqi-791c.a.aivencloud.com
- *   OPENSEARCH_PORT     — e.g. 27099
+ *   OPENSEARCH_HOST     — managed OpenSearch hostname
+ *   OPENSEARCH_PORT     — managed OpenSearch TLS port
  *   OPENSEARCH_USERNAME — e.g. avnadmin
  *   OPENSEARCH_PASSWORD — (Aiven OpenSearch admin password)
  */
