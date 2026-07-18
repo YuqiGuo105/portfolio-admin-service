@@ -15,8 +15,6 @@ prometheus.scrape "portfolio_services" {
   targets = [
     {"__address__" = "portfolio-notification-service-702193211434.us-central1.run.app", "job" = "portfolio-notification-service"},
     {"__address__" = "portfolio-admin-service-702193211434.us-central1.run.app", "job" = "portfolio-admin-service"},
-    {"__address__" = "portfolio-search-indexer-702193211434.us-central1.run.app", "job" = "portfolio-search-indexer"},
-    {"__address__" = "portfolio-rag-indexer-702193211434.us-central1.run.app", "job" = "portfolio-rag-indexer"},
     {"__address__" = "portfolio-agent-service-702193211434.us-central1.run.app", "job" = "portfolio-agent-service"},
     {"__address__" = "portfolio-mcp-gateway-702193211434.us-central1.run.app", "job" = "portfolio-mcp-gateway"},
     {"__address__" = "portfolio-analytics-aggregator-702193211434.us-central1.run.app", "job" = "analytics-aggregator-service"},
@@ -27,6 +25,42 @@ prometheus.scrape "portfolio_services" {
   metrics_path = "/actuator/prometheus"
   scrape_interval = "60s"
   scrape_timeout  = "15s"
+
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "portfolio_search_indexer" {
+  targets = [
+    {"__address__" = "portfolio-search-indexer-702193211434.us-central1.run.app", "job" = "portfolio-search-indexer"},
+  ]
+
+  scheme          = "https"
+  metrics_path    = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout  = "15s"
+
+  authorization {
+    type             = "Bearer"
+    credentials_file = "/var/run/cloud-run-identity/token"
+  }
+
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "portfolio_rag_indexer" {
+  targets = [
+    {"__address__" = "portfolio-rag-indexer-702193211434.us-central1.run.app", "job" = "portfolio-rag-indexer"},
+  ]
+
+  scheme          = "https"
+  metrics_path    = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout  = "15s"
+
+  authorization {
+    type             = "Bearer"
+    credentials_file = "/var/run/cloud-run-identity/token"
+  }
 
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]
 }
