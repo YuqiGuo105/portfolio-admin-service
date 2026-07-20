@@ -54,7 +54,7 @@ public class ContentFetcher {
 
     private Optional<RagSource> fetchProject(String id) {
         String sql = """
-            SELECT id, title, content
+            SELECT id, title, summary, content
               FROM public."Projects" WHERE id = ?
             """;
         try {
@@ -62,6 +62,7 @@ public class ContentFetcher {
                     .sourceType("PROJECT")
                     .sourceId(rs.getObject("id", UUID.class).toString())
                     .title(rs.getString("title"))
+                    .summary(rs.getString("summary"))
                     .content(rs.getString("content"))
                     .url("/work-single/" + rs.getObject("id", UUID.class))
                     .build(), UUID.fromString(id)));

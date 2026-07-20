@@ -88,6 +88,7 @@ import static org.mockito.Mockito.when;
         "spring.datasource.username=sa",
         "spring.datasource.password=",
         "portfolio.opensearch.worker.enabled=false",
+        "portfolio.outbox.worker.enabled=false",
         // Notification topics
         "portfolio.kafka.topics.notification.article-updates=content.notification.article-updates.v1",
         "portfolio.kafka.topics.notification.feature-updates=content.notification.feature-updates.v1",
@@ -167,6 +168,7 @@ class ContentPublishNotificationE2ETest {
 
         var adapter = org.mockito.Mockito.mock(site.yuqi.admin.adapter.ContentAdapter.class);
         when(adapter.get("blog-uuid-001")).thenReturn(Optional.of(blog));
+        when(adapter.markPublished("blog-uuid-001")).thenReturn(blog);
         when(adapter.toSnapshot(any())).thenReturn(Map.of("title", "Hello Kafka"));
         when(adapters.get(SourceType.BLOG)).thenReturn(adapter);
 
@@ -186,6 +188,9 @@ class ContentPublishNotificationE2ETest {
         when(outboxService.enqueuePublish(any(), anyInt(), any()))
                 .thenReturn(site.yuqi.admin.domain.ContentEventOutbox.builder()
                         .id(UUID.randomUUID())
+                        .sourceType("BLOG")
+                        .sourceIdText("blog-uuid-001")
+                        .sourceVersion(1)
                         .status(site.yuqi.admin.domain.OutboxStatus.PENDING)
                         .idempotencyKey("CONTENT_PUBLISHED:BLOG:blog-uuid-001:v1")
                         .build());

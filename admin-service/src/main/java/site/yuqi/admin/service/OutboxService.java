@@ -17,6 +17,8 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -55,6 +57,7 @@ public class OutboxService {
             payload.put("title", content.getTitle());
             payload.put("summary", content.getSummary());
             payload.put("url", content.getUrl());
+            payload.put("imageUrl", content.getImageUrl());
             payload.put("createdAt", Instant.now().toString());
             payload.put("idempotencyKey", key);
             payload.put("metadata", Map.of(
@@ -97,8 +100,37 @@ public class OutboxService {
     @Transactional(readOnly = true)
     public List<ContentEventOutbox> listPendingOutboxEvents(int batchSize) {
         return repository.findByStatusAndNextRetryAtBeforeOrderByCreatedAtAsc(
-                OutboxStatus.PENDING, Instant.now(),
+                OutboxStatus.PENDING,
+                Instant.now(),
                 PageRequest.of(0, Math.max(1, batchSize)));
+    }
+
+    @Transactional
+    public List<ContentEventOutbox> claimReadyOutboxEvents(int batchSize, long leaseSeconds) {
+        Instant now = Instant.now();
+        List<ContentEventOutbox> events = repository
+                .findByStatusInAndNextRetryAtLessThanEqualOrderByCreatedAtAsc(
+                        Set.of(OutboxStatus.PENDING, OutboxStatus.FAILED, OutboxStatus.PROCESSING),
+                        now,
+                        PageRequest.of(0, Math.max(1, batchSize)));
+        Instant leaseUntil = now.plusSeconds(Math.max(10, leaseSeconds));
+        events.forEach(event -> {
+            event.setStatus(OutboxStatus.PROCESSING);
+            event.setNextRetryAt(leaseUntil);
+        });
+        return events;
+    }
+
+    @Transactional
+    public Optional<ContentEventOutbox> markOutboxEventProcessing(UUID eventId, long leaseSeconds) {
+        return repository.findById(eventId).map(event -> {
+            if (event.getStatus() == OutboxStatus.SENT || event.getStatus() == OutboxStatus.DLQ) {
+                return event;
+            }
+            event.setStatus(OutboxStatus.PROCESSING);
+            event.setNextRetryAt(Instant.now().plusSeconds(Math.max(10, leaseSeconds)));
+            return event;
+        });
     }
 
     @Transactional
@@ -113,10 +145,11 @@ public class OutboxService {
     @Transactional
     public void markOutboxEventFailed(UUID eventId, String error) {
         repository.findById(eventId).ifPresent(e -> {
-            e.setStatus(OutboxStatus.FAILED);
-            e.setRetryCount(e.getRetryCount() + 1);
+            int retryCount = e.getRetryCount() + 1;
+            e.setStatus(retryCount >= 8 ? OutboxStatus.DLQ : OutboxStatus.FAILED);
+            e.setRetryCount(retryCount);
             e.setLastError(error);
-            e.setNextRetryAt(Instant.now().plusSeconds(60L * (1L << Math.min(e.getRetryCount(), 6))));
+            e.setNextRetryAt(Instant.now().plusSeconds(60L * (1L << Math.min(retryCount, 6))));
         });
     }
 }

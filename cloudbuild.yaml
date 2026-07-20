@@ -1,0 +1,48 @@
+substitutions:
+  _TAG: latest
+  _AR_REPO: us-central1-docker.pkg.dev/portfolio-notify-prod/portfolio
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: build-admin
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_AR_REPO}/portfolio-admin-service:${_TAG}
+      - -f
+      - admin-service/Dockerfile
+      - .
+    waitFor: ['-']
+
+  - id: build-search-indexer
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_AR_REPO}/portfolio-search-indexer:${_TAG}
+      - -f
+      - search-indexer/Dockerfile
+      - .
+    waitFor: ['-']
+
+  - id: build-rag-indexer
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_AR_REPO}/portfolio-rag-indexer:${_TAG}
+      - -f
+      - rag-indexer/Dockerfile
+      - .
+    waitFor: ['-']
+
+images:
+  - ${_AR_REPO}/portfolio-admin-service:${_TAG}
+  - ${_AR_REPO}/portfolio-search-indexer:${_TAG}
+  - ${_AR_REPO}/portfolio-rag-indexer:${_TAG}
+
+timeout: 1800s

@@ -6,12 +6,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import site.yuqi.admin.adapter.NormalizedContent;
+import site.yuqi.admin.domain.ContentEventOutbox;
 import site.yuqi.admin.domain.OutboxEventType;
 import site.yuqi.admin.domain.Topic;
 import site.yuqi.admin.service.OutboxService;
 
 import java.time.Instant;
-import java.util.UUID;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Publishes {@link ContentPublishedEvent}s to the notification-service
@@ -33,6 +36,8 @@ import java.util.UUID;
 public class NotificationEventPublisher {
 
     private final KafkaTemplate<String, ContentPublishedEvent> kafkaTemplate;
+    private final OutboxService outboxService;
+    private final NotificationDeliveryClient deliveryClient;
 
     @Value("${portfolio.kafka.topics.notification.article-updates}")
     private String articleUpdatesTopic;
@@ -43,7 +48,9 @@ public class NotificationEventPublisher {
     @Value("${portfolio.kafka.topics.notification.job-updates}")
     private String jobUpdatesTopic;
 
-    public void publish(NormalizedContent content, int version, Topic notificationTopic) {
+    public CompletableFuture<?> publish(ContentEventOutbox outbox, NormalizedContent content,
+                        int version, Topic notificationTopic) {
+        outboxService.markOutboxEventProcessing(outbox.getId(), 60);
         String idempotencyKey = OutboxService.idempotencyKey(
                 OutboxEventType.CONTENT_PUBLISHED,
                 content.getSourceType(),
@@ -51,8 +58,8 @@ public class NotificationEventPublisher {
                 version);
 
         ContentPublishedEvent event = ContentPublishedEvent.builder()
-                .eventId(UUID.randomUUID().toString())
-                .occurredAt(Instant.now())
+                .eventId(outbox.getId().toString())
+                .occurredAt(outbox.getCreatedAt() == null ? Instant.now() : outbox.getCreatedAt())
                 .sourceType(content.getSourceType().name())
                 .sourceId(content.getSourceId())
                 .sourceVersion(version)
@@ -66,21 +73,72 @@ public class NotificationEventPublisher {
                 .idempotencyKey(idempotencyKey)
                 .build();
 
-        String kafkaTopic = resolveKafkaTopic(notificationTopic);
-        String partitionKey = content.getSourceType().name() + ":" + content.getSourceId();
+        return send(outbox, event, notificationTopic,
+                content.getSourceType().name() + ":" + content.getSourceId());
+    }
 
-        kafkaTemplate.send(kafkaTopic, partitionKey, event).whenComplete((result, ex) -> {
+    public CompletableFuture<?> publish(ContentEventOutbox outbox) {
+        Map<String, Object> payload = outbox.getPayload();
+        Map<String, Object> metadata = asMap(payload.get("metadata"));
+        Topic notificationTopic = Topic.valueOf(outbox.getTopic());
+        String sourceType = outbox.getSourceType();
+        String sourceId = outbox.getSourceIdText();
+
+        ContentPublishedEvent event = ContentPublishedEvent.builder()
+                .eventId(outbox.getId().toString())
+                .occurredAt(outbox.getCreatedAt() == null ? Instant.now() : outbox.getCreatedAt())
+                .sourceType(sourceType)
+                .sourceId(sourceId)
+                .sourceVersion(outbox.getSourceVersion())
+                .notificationTopic(notificationTopic.name())
+                .title(asString(payload.get("title")))
+                .summary(asString(payload.get("summary")))
+                .url(asString(payload.get("url")))
+                .imageUrl(asString(payload.get("imageUrl")))
+                .category(asString(metadata.get("category")))
+                .tags(asStringList(metadata.get("tags")))
+                .idempotencyKey(outbox.getIdempotencyKey())
+                .build();
+
+        return send(outbox, event, notificationTopic, sourceType + ":" + sourceId);
+    }
+
+    private CompletableFuture<?> send(ContentEventOutbox outbox, ContentPublishedEvent event,
+                      Topic notificationTopic, String partitionKey) {
+
+        String kafkaTopic = resolveKafkaTopic(notificationTopic);
+
+        return kafkaTemplate.send(kafkaTopic, partitionKey, event).whenCompleteAsync((result, ex) -> {
             if (ex != null) {
-                log.error("Failed to publish notification event for {}:{} topic={}",
-                        content.getSourceType(), content.getSourceId(), kafkaTopic, ex);
-            } else {
+                outboxService.markOutboxEventFailed(outbox.getId(), ex.getMessage());
+                log.error("Failed to publish notification outbox event {} topic={}",
+                        outbox.getId(), kafkaTopic, ex);
+            } else if (deliveryClient.deliver(event)) {
+                outboxService.markOutboxEventSent(outbox.getId());
                 log.info("Published notification event for {}:{} v{} → topic={} partition={} offset={}",
-                        content.getSourceType(), content.getSourceId(), version,
+                        outbox.getSourceType(), outbox.getSourceIdText(), outbox.getSourceVersion(),
                         kafkaTopic,
                         result.getRecordMetadata().partition(),
                         result.getRecordMetadata().offset());
+            } else {
+                outboxService.markOutboxEventFailed(outbox.getId(),
+                        "Notification worker wake/delivery did not complete");
             }
         });
+    }
+
+    private static String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object value) {
+        return value instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+    }
+
+    private static List<String> asStringList(Object value) {
+        if (!(value instanceof List<?> list)) return List.of();
+        return list.stream().map(String::valueOf).toList();
     }
 
     private String resolveKafkaTopic(Topic notificationTopic) {

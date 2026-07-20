@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Set;
 
 public interface IndexingJobRepository extends JpaRepository<IndexingJob, UUID> {
 
@@ -31,4 +32,7 @@ public interface IndexingJobRepository extends JpaRepository<IndexingJob, UUID> 
 
     List<IndexingJob> findByStatusAndJobTypeAndNextRetryAtBeforeOrderByCreatedAtAsc(
             JobStatus status, JobType jobType, Instant now, Pageable pageable);
+
+    List<IndexingJob> findByStatusInAndNextRetryAtLessThanEqualOrderByCreatedAtAsc(
+            Set<JobStatus> statuses, Instant now, Pageable pageable);
 }

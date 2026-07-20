@@ -75,6 +75,10 @@ public class ContentService {
         ContentAdapter adapter = adapters.get(type);
         NormalizedContent created = adapter.create(input);
 
+        if (publish) {
+            created = adapter.markPublished(created.getSourceId());
+        }
+
         // Version 1 snapshot (does not depend on publish flag — every create is recorded).
         ContentVersion v1 = versionService.snapshot(created, 1, actor, "initial",
                 adapter.toSnapshot(created));
@@ -97,6 +101,10 @@ public class ContentService {
 
         NormalizedContent after = adapter.update(sourceId, input);
 
+        if (publish) {
+            after = adapter.markPublished(sourceId);
+        }
+
         auditLogService.log(actor, AuditAction.UPDATE, type, sourceId,
                 versionService.latestVersionFor(type.name(), sourceId),
                 beforeSnap, adapter.toSnapshot(after));
@@ -110,7 +118,7 @@ public class ContentService {
     @Transactional
     public PublishResult publish(SourceType type, String sourceId, String actor, String changeNote) {
         ContentAdapter adapter = adapters.get(type);
-        NormalizedContent content = getOrThrow(type, sourceId);
+        NormalizedContent content = adapter.markPublished(sourceId);
         return publishInternal(adapter, content, actor, changeNote, null);
     }
 
@@ -172,7 +180,7 @@ public class ContentService {
         // persists and a future outbox relay can re-send.
         publishAfterCommit(ragJob);
         publishAfterCommit(searchJob);
-        notifyAfterCommit(content, version.getVersion(), topic);
+        notifyAfterCommit(outbox, content, version.getVersion(), topic);
 
         return PublishResult.builder()
                 .version(version)
@@ -204,16 +212,17 @@ public class ContentService {
      * Uses a captured snapshot of {@code content} + version so the lambda does not
      * close over mutable state.
      */
-    private void notifyAfterCommit(NormalizedContent content, int version, Topic topic) {
+    private void notifyAfterCommit(ContentEventOutbox outbox, NormalizedContent content,
+                                   int version, Topic topic) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    notificationEventPublisher.publish(content, version, topic);
+                    notificationEventPublisher.publish(outbox, content, version, topic);
                 }
             });
         } else {
-            notificationEventPublisher.publish(content, version, topic);
+            notificationEventPublisher.publish(outbox, content, version, topic);
         }
     }
 }

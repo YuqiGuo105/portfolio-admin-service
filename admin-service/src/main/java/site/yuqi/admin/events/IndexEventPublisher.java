@@ -7,9 +7,11 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import site.yuqi.admin.domain.IndexingJob;
 import site.yuqi.admin.domain.JobType;
+import site.yuqi.admin.service.IndexingJobService;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Publishes {@link ContentIndexEvent}s to the Kafka topics consumed by
@@ -27,6 +29,8 @@ import java.util.UUID;
 public class IndexEventPublisher {
 
     private final KafkaTemplate<String, ContentIndexEvent> kafkaTemplate;
+    private final IndexingJobService jobs;
+    private final IndexerWakeClient wakeClient;
 
     @Value("${portfolio.kafka.topics.search-index}")
     private String searchTopic;
@@ -34,7 +38,8 @@ public class IndexEventPublisher {
     @Value("${portfolio.kafka.topics.rag-index}")
     private String ragTopic;
 
-    public void publish(IndexingJob job) {
+    public CompletableFuture<?> publish(IndexingJob job) {
+        jobs.markIndexingJobDispatching(job.getId(), 300);
         ContentIndexEvent event = ContentIndexEvent.builder()
                 .eventId(UUID.randomUUID().toString())
                 .occurredAt(Instant.now())
@@ -49,15 +54,19 @@ public class IndexEventPublisher {
         String topic = job.getJobType() == JobType.SEARCH_INDEX ? searchTopic : ragTopic;
         String partitionKey = job.getSourceType() + ":" + job.getSourceIdText();
 
-        kafkaTemplate.send(topic, partitionKey, event).whenComplete((result, ex) -> {
+        return kafkaTemplate.send(topic, partitionKey, event).whenCompleteAsync((result, ex) -> {
             if (ex != null) {
+                jobs.markIndexingJobFailed(job.getId(), ex.getMessage());
                 log.error("Failed to publish {} event for {}:{}",
                         job.getJobType(), job.getSourceType(), job.getSourceIdText(), ex);
-            } else if (log.isDebugEnabled()) {
-                log.debug("Published {} event to {} partition {} offset {}",
-                        job.getJobType(), topic,
-                        result.getRecordMetadata().partition(),
-                        result.getRecordMetadata().offset());
+                return;
+            }
+            log.info("Published {} event to {} partition {} offset {}",
+                    job.getJobType(), topic,
+                    result.getRecordMetadata().partition(),
+                    result.getRecordMetadata().offset());
+            if (!wakeClient.wakeAndAwait(job)) {
+                jobs.markIndexingJobFailed(job.getId(), "Indexer did not complete within wake lease");
             }
         });
     }

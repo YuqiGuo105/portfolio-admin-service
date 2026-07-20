@@ -8,6 +8,7 @@ import site.yuqi.admin.domain.OutboxStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public interface ContentEventOutboxRepository extends JpaRepository<ContentEventOutbox, UUID> {
@@ -23,4 +24,7 @@ public interface ContentEventOutboxRepository extends JpaRepository<ContentEvent
 
     List<ContentEventOutbox> findByStatusAndNextRetryAtBeforeOrderByCreatedAtAsc(
             OutboxStatus status, Instant now, Pageable pageable);
+
+    List<ContentEventOutbox> findByStatusInAndNextRetryAtLessThanEqualOrderByCreatedAtAsc(
+            Set<OutboxStatus> statuses, Instant now, Pageable pageable);
 }

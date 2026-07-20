@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -96,10 +97,36 @@ public class IndexingJobService {
     }
 
     @Transactional
+    public List<IndexingJob> claimReadyIndexingJobs(int batchSize, long leaseSeconds) {
+        Instant now = Instant.now();
+        List<IndexingJob> jobs = repository.findByStatusInAndNextRetryAtLessThanEqualOrderByCreatedAtAsc(
+                Set.of(JobStatus.PENDING, JobStatus.FAILED, JobStatus.PROCESSING),
+                now,
+                PageRequest.of(0, Math.max(1, batchSize)));
+        Instant leaseUntil = now.plusSeconds(Math.max(30, leaseSeconds));
+        jobs.forEach(job -> {
+            job.setStatus(JobStatus.PROCESSING);
+            job.setStartedAt(now);
+            job.setNextRetryAt(leaseUntil);
+        });
+        return jobs;
+    }
+
+    @Transactional
     public void markIndexingJobProcessing(UUID jobId) {
         repository.findById(jobId).ifPresent(j -> {
             j.setStatus(JobStatus.PROCESSING);
             j.setStartedAt(Instant.now());
+        });
+    }
+
+    @Transactional
+    public void markIndexingJobDispatching(UUID jobId, long leaseSeconds) {
+        repository.findById(jobId).ifPresent(j -> {
+            if (j.getStatus() == JobStatus.DONE) return;
+            j.setStatus(JobStatus.PROCESSING);
+            j.setStartedAt(Instant.now());
+            j.setNextRetryAt(Instant.now().plusSeconds(Math.max(30, leaseSeconds)));
         });
     }
 

@@ -44,13 +44,17 @@ public class ProjectAdapter implements ContentAdapter {
                 .id(UUID.randomUUID())
                 .title(str(input, "title"))
                 .content(str(input, "content", "summary"))
+                .summary(str(input, "summary", "description"))
+                .publicationStatus("DRAFT")
+                .featured(boolVal(input, "featured"))
+                .coverVariant(defaultString(str(input, "coverVariant", "cover_variant"), "IMAGE"))
+                .experienceVariant(str(input, "experienceVariant", "experience_variant"))
                 .category(str(input, "category"))
                 .year(str(input, "year"))
                 .technology(techToString(input))
                 .imageUrl(str(input, "imageUrl", "image_url"))
                 .externalUrl(str(input, "externalUrl", "URL"))
                 .num(intVal(input, "num"))
-                .publishedAt(Instant.now())
                 .updatedAt(Instant.now())
                 .build();
         return normalize(repository.save(row));
@@ -62,7 +66,13 @@ public class ProjectAdapter implements ContentAdapter {
                 .orElseThrow(() -> new IllegalArgumentException("PROJECT not found: " + sourceId));
         if (input.containsKey("title"))       row.setTitle(str(input, "title"));
         if (input.containsKey("content"))     row.setContent(str(input, "content"));
-        if (input.containsKey("summary"))     row.setContent(str(input, "summary"));
+        if (input.containsKey("summary") || input.containsKey("description"))
+            row.setSummary(str(input, "summary", "description"));
+        if (input.containsKey("featured")) row.setFeatured(boolVal(input, "featured"));
+        if (input.containsKey("coverVariant") || input.containsKey("cover_variant"))
+            row.setCoverVariant(defaultString(str(input, "coverVariant", "cover_variant"), "IMAGE"));
+        if (input.containsKey("experienceVariant") || input.containsKey("experience_variant"))
+            row.setExperienceVariant(str(input, "experienceVariant", "experience_variant"));
         if (input.containsKey("category"))    row.setCategory(str(input, "category"));
         if (input.containsKey("year"))        row.setYear(str(input, "year"));
         if (input.containsKey("technology") || input.containsKey("tags"))
@@ -72,6 +82,17 @@ public class ProjectAdapter implements ContentAdapter {
         if (input.containsKey("externalUrl") || input.containsKey("URL"))
             row.setExternalUrl(str(input, "externalUrl", "URL"));
         if (input.containsKey("num"))         row.setNum(intVal(input, "num"));
+        return normalize(repository.save(row));
+    }
+
+    @Override
+    public NormalizedContent markPublished(String sourceId) {
+        Project row = repository.findById(UUID.fromString(sourceId))
+                .orElseThrow(() -> new IllegalArgumentException("PROJECT not found: " + sourceId));
+        if (row.getPublishedAt() == null) {
+            row.setPublishedAt(Instant.now());
+        }
+        row.setPublicationStatus("PUBLISHED");
         return normalize(repository.save(row));
     }
 
@@ -87,7 +108,11 @@ public class ProjectAdapter implements ContentAdapter {
                 "tags", c.getTags(),
                 "imageUrl", c.getImageUrl(),
                 "url", c.getUrl(),
-                "externalUrl", c.rawOrEmpty().get("URL"));
+                "externalUrl", c.rawOrEmpty().get("URL"),
+                "publicationStatus", c.rawOrEmpty().get("publication_status"),
+                "featured", c.rawOrEmpty().get("featured"),
+                "coverVariant", c.rawOrEmpty().get("cover_variant"),
+                "experienceVariant", c.rawOrEmpty().get("experience_variant"));
     }
 
     @Override
@@ -125,13 +150,18 @@ public class ProjectAdapter implements ContentAdapter {
                 .sourceType(SourceType.PROJECT)
                 .sourceId(p.getId().toString())
                 .title(p.getTitle())
-                .summary(p.getContent())   // PROJECT has no separate summary column
+                .summary(projectSummary(p))
                 .content(p.getContent())
                 .category(p.getCategory())
                 .tags(AdapterUtils.parseTags(p.getTechnology()))
                 .imageUrl(p.getImageUrl())
                 .raw(AdapterUtils.compact(
                         "id", p.getId().toString(),
+                        "summary", projectSummary(p),
+                        "publication_status", p.getPublicationStatus(),
+                        "featured", p.isFeatured(),
+                        "cover_variant", p.getCoverVariant(),
+                        "experience_variant", p.getExperienceVariant(),
                         "category", p.getCategory(),
                         "year", p.getYear(),
                         "technology", p.getTechnology(),
@@ -143,6 +173,20 @@ public class ProjectAdapter implements ContentAdapter {
                 .build();
         c.setUrl(toUrl(c));
         return c;
+    }
+
+    private static String projectSummary(Project project) {
+        if (project.getSummary() != null && !project.getSummary().isBlank()) {
+            return project.getSummary();
+        }
+        if (project.getContent() == null || project.getContent().isBlank()) {
+            return "";
+        }
+        String plainText = project.getContent()
+                .replaceAll("<[^>]+>", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return plainText.length() <= 280 ? plainText : plainText.substring(0, 277) + "...";
     }
 
     private static String blank(String s) { return (s == null || s.isBlank()) ? null : s; }
@@ -169,5 +213,15 @@ public class ProjectAdapter implements ContentAdapter {
         if (v == null) return null;
         if (v instanceof Number n) return n.intValue();
         try { return Integer.parseInt(String.valueOf(v)); } catch (NumberFormatException e) { return null; }
+    }
+
+    private static boolean boolVal(Map<String, Object> input, String key) {
+        Object value = input.get(key);
+        if (value instanceof Boolean flag) return flag;
+        return value != null && Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    private static String defaultString(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 }

@@ -43,6 +43,15 @@ public class KbDocumentWriter {
             throw new IllegalArgumentException("chunk count != embedding count");
         }
 
+        // Replaying the same Kafka event must replace, not accumulate, the
+        // same source version. This delete and the inserts share one DB tx.
+        jdbc.update("""
+                DELETE FROM public.kb_documents
+                 WHERE metadata->>'source_type' = ?
+                   AND metadata->>'source_id' = ?
+                   AND metadata->>'source_version' = ?
+                """, source.getSourceType(), source.getSourceId(), String.valueOf(sourceVersion));
+
         jdbc.update("""
                 UPDATE public.kb_documents
                    SET metadata = jsonb_set(metadata, '{status}', '"SUPERSEDED"')

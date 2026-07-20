@@ -10,6 +10,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
 import site.yuqi.admin.security.AdminAuthFilter;
+import site.yuqi.admin.security.InternalTokenFilter;
 
 import java.util.Arrays;
 import java.util.List;
@@ -26,6 +27,14 @@ public class WebConfig {
         FilterRegistrationBean<AdminAuthFilter> reg = new FilterRegistrationBean<>(filter);
         reg.addUrlPatterns("/*");
         reg.setOrder(10);
+        return reg;
+    }
+
+    @Bean
+    public FilterRegistrationBean<InternalTokenFilter> internalTokenFilterRegistration(InternalTokenFilter filter) {
+        FilterRegistrationBean<InternalTokenFilter> reg = new FilterRegistrationBean<>(filter);
+        reg.addUrlPatterns("/*");
+        reg.setOrder(11);
         return reg;
     }
 

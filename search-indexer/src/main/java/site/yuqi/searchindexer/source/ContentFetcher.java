@@ -3,6 +3,7 @@ package site.yuqi.searchindexer.source;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.jsoup.Jsoup;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -56,7 +57,7 @@ public class ContentFetcher {
                 doc.put("type", "BLOG");
                 doc.put("title", rs.getString("title"));
                 doc.put("summary", rs.getString("description"));
-                doc.put("body", rs.getString("content"));
+                doc.put("body", plainText(rs.getString("content")));
                 doc.put("category", rs.getString("category"));
                 doc.put("tags", parseTags(rs.getString("tags")));
                 doc.put("imageUrl", rs.getString("image_url"));
@@ -72,7 +73,7 @@ public class ContentFetcher {
 
     private Optional<Map<String, Object>> fetchProject(String sourceId) {
         String sql = """
-            SELECT id, title, content, category, year, technology, image_url, "URL" AS external_url
+            SELECT id, title, summary, content, category, year, technology, image_url, "URL" AS external_url
               FROM public."Projects"
              WHERE id = ?
             """;
@@ -82,7 +83,8 @@ public class ContentFetcher {
                 doc.put("id", "PROJECT:" + rs.getObject("id", UUID.class));
                 doc.put("type", "PROJECT");
                 doc.put("title", rs.getString("title"));
-                doc.put("body", rs.getString("content"));
+                doc.put("summary", rs.getString("summary"));
+                doc.put("body", plainText(rs.getString("content")));
                 doc.put("category", rs.getString("category"));
                 doc.put("tags", parseTags(rs.getString("technology")));
                 doc.put("imageUrl", rs.getString("image_url"));
@@ -154,5 +156,9 @@ public class ContentFetcher {
     private static List<String> parseTags(String raw) {
         if (raw == null || raw.isBlank()) return List.of();
         return List.of(raw.split("\\s*,\\s*"));
+    }
+
+    private static String plainText(String value) {
+        return value == null ? null : Jsoup.parse(value).text();
     }
 }

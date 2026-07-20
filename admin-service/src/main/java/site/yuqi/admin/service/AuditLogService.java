@@ -21,10 +21,16 @@ public class AuditLogService {
     @Transactional
     public AuditLog log(String actor, AuditAction action, SourceType sourceType, String sourceId,
                         Integer version, Map<String, Object> before, Map<String, Object> after) {
+        return log(actor, action, sourceType.name(), sourceId, version, before, after);
+    }
+
+    @Transactional
+    public AuditLog log(String actor, AuditAction action, String sourceType, String sourceId,
+                        Integer version, Map<String, Object> before, Map<String, Object> after) {
         return repository.save(AuditLog.builder()
                 .actor(actor)
                 .action(action)
-                .sourceType(sourceType.name())
+                .sourceType(sourceType)
                 .sourceIdText(sourceId)
                 .sourceVersion(version)
                 .beforeSnapshot(before)

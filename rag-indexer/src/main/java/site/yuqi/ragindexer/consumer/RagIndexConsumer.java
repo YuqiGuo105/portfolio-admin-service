@@ -3,6 +3,7 @@ package site.yuqi.ragindexer.consumer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.jsoup.Jsoup;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
@@ -67,6 +68,11 @@ public class RagIndexConsumer {
                 evt.getSourceVersion(), jobId);
 
         try {
+            if (jobs.isDone(jobId)) {
+                log.info("RAG_INDEX job {} already DONE; acknowledging replay", jobId);
+                ack.acknowledge();
+                return;
+            }
             jobs.markProcessing(jobId);
 
             Optional<RagSource> sourceOpt = fetcher.fetch(evt.getSourceType(), evt.getSourceId());
@@ -74,6 +80,7 @@ public class RagIndexConsumer {
                 // Source row deleted — supersede everything we previously indexed for it.
                 writer.supersedeAll(evt.getSourceType(), evt.getSourceId());
                 jobs.markDone(jobId);
+                ack.acknowledge();
                 return;
             }
 
@@ -85,6 +92,7 @@ public class RagIndexConsumer {
                         source.getSourceType(), source.getSourceId());
                 writer.supersedeAll(source.getSourceType(), source.getSourceId());
                 jobs.markDone(jobId);
+                ack.acknowledge();
                 return;
             }
 
@@ -95,6 +103,7 @@ public class RagIndexConsumer {
 
             writer.supersedeAndInsert(source, evt.getSourceVersion(), chunks, embeddings);
             jobs.markDone(jobId);
+            ack.acknowledge();
         } catch (Exception e) {
             log.error("RAG_INDEX job {} failed: {}", jobId, e.getMessage(), e);
             try {
@@ -102,8 +111,7 @@ public class RagIndexConsumer {
             } catch (Exception inner) {
                 log.error("Could not mark job {} as FAILED: {}", jobId, inner.getMessage());
             }
-        } finally {
-            ack.acknowledge();
+            throw new IllegalStateException("RAG_INDEX job failed: " + jobId, e);
         }
     }
 
@@ -112,7 +120,9 @@ public class RagIndexConsumer {
         StringBuilder sb = new StringBuilder();
         if (s.getTitle()   != null && !s.getTitle().isBlank())   sb.append(s.getTitle()).append("\n\n");
         if (s.getSummary() != null && !s.getSummary().isBlank()) sb.append(s.getSummary()).append("\n\n");
-        if (s.getContent() != null && !s.getContent().isBlank()) sb.append(s.getContent());
+        if (s.getContent() != null && !s.getContent().isBlank()) {
+            sb.append(Jsoup.parse(s.getContent()).text());
+        }
         return sb.toString().strip();
     }
 }

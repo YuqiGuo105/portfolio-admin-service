@@ -30,6 +30,16 @@ public interface ContentAdapter {
 
     NormalizedContent update(String sourceId, Map<String, Object> input);
 
+    /**
+     * Applies source-table publication metadata immediately before the publish
+     * transaction creates outbox and indexing records. Adapters whose source
+     * schema has no publication marker may keep the default no-op behavior.
+     */
+    default NormalizedContent markPublished(String sourceId) {
+        return get(sourceId)
+                .orElseThrow(() -> new IllegalArgumentException(sourceType() + " not found: " + sourceId));
+    }
+
     /** Snapshot serialization for content_versions and audit logs. */
     Map<String, Object> toSnapshot(NormalizedContent content);
 

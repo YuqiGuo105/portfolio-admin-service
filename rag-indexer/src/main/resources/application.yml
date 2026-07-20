@@ -38,6 +38,7 @@ spring:
       concurrency: 1   # embedding per-request rate matters more than parallelism
 
 portfolio:
+  internal-token: ${INTERNAL_API_TOKEN:}
   kafka:
     topics:
       rag-index: ${KAFKA_TOPIC_RAG_INDEX:content.rag.index.v1}

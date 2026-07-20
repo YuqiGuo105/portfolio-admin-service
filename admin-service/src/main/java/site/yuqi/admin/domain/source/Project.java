@@ -38,6 +38,21 @@ public class Project {
     @Column(name = "content")
     private String content;
 
+    @Column(name = "summary")
+    private String summary;
+
+    @Column(name = "publication_status", nullable = false)
+    private String publicationStatus;
+
+    @Column(name = "featured", nullable = false)
+    private boolean featured;
+
+    @Column(name = "cover_variant", nullable = false)
+    private String coverVariant;
+
+    @Column(name = "experience_variant")
+    private String experienceVariant;
+
     @Column(name = "published_at")
     private Instant publishedAt;
 
@@ -66,7 +81,8 @@ public class Project {
     void onCreate() {
         if (id == null) id = UUID.randomUUID();
         Instant now = Instant.now();
-        if (publishedAt == null) publishedAt = now;
+        if (publicationStatus == null) publicationStatus = "DRAFT";
+        if (coverVariant == null) coverVariant = "IMAGE";
         if (updatedAt == null) updatedAt = now;
     }
 

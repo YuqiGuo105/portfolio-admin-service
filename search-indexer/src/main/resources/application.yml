@@ -38,6 +38,7 @@ spring:
       concurrency: 2
 
 portfolio:
+  internal-token: ${INTERNAL_API_TOKEN:}
   opensearch:
     host: ${OPENSEARCH_HOST:localhost}
     port: ${OPENSEARCH_PORT:9200}

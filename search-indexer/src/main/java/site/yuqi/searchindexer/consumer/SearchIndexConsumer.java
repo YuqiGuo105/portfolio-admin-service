@@ -22,10 +22,11 @@ import java.util.UUID;
  *   2. Fetch source row from Postgres
  *   3. Upsert (or delete) document in OpenSearch
  *   4. Mark indexing_jobs row as DONE (or FAILED on exception)
- *   5. Manually ack the Kafka offset.
+ *   5. Manually ack the Kafka offset only after the projection is durable.
  *
- * <p>Failures bump retry_count and leave the offset committed — admin-service
- * (or a future scheduled retry job) re-publishes after backoff.
+ * <p>Transient failures are thrown to the container error handler. The handler
+ * seeks the partition and retries; the OpenSearch document id and durable job
+ * state make a replay idempotent.
  */
 @Slf4j
 @Component
@@ -63,6 +64,11 @@ public class SearchIndexConsumer {
                 evt.getEventId(), evt.getSourceType(), evt.getSourceId(), jobId);
 
         try {
+            if (jobs.isDone(jobId)) {
+                log.info("SEARCH_INDEX job {} already DONE; acknowledging replay", jobId);
+                ack.acknowledge();
+                return;
+            }
             jobs.markProcessing(jobId);
 
             Optional<Map<String, Object>> doc = fetcher.fetchSearchDocument(
@@ -87,6 +93,7 @@ public class SearchIndexConsumer {
             }
 
             jobs.markDone(jobId);
+            ack.acknowledge();
         } catch (Exception e) {
             log.error("SEARCH_INDEX job {} failed: {}", jobId, e.getMessage(), e);
             try {
@@ -94,8 +101,7 @@ public class SearchIndexConsumer {
             } catch (Exception inner) {
                 log.error("Could not mark job {} as FAILED: {}", jobId, inner.getMessage());
             }
-        } finally {
-            ack.acknowledge();
+            throw new IllegalStateException("SEARCH_INDEX job failed: " + jobId, e);
         }
     }
 

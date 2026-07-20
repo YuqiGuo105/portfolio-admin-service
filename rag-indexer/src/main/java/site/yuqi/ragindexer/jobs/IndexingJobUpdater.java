@@ -25,6 +25,18 @@ public class IndexingJobUpdater {
         return OffsetDateTime.now(ZoneOffset.UTC);
     }
 
+    public boolean isDone(UUID id) {
+        Boolean done = jdbc.query("""
+                SELECT status = 'DONE' FROM public.indexing_jobs WHERE id = ?
+                """, ps -> ps.setObject(1, id), rs -> rs.next() ? rs.getBoolean(1) : null);
+        return Boolean.TRUE.equals(done);
+    }
+
+    public String status(UUID id) {
+        return jdbc.query("SELECT status FROM public.indexing_jobs WHERE id = ?",
+                ps -> ps.setObject(1, id), rs -> rs.next() ? rs.getString(1) : "MISSING");
+    }
+
     @Transactional
     public void markProcessing(UUID id) {
         OffsetDateTime now = nowUtc();

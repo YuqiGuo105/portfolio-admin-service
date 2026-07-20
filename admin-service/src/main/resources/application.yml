@@ -31,6 +31,7 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+    table: admin_flyway_schema_history
     # Skip checksum validation against flyway_schema_history. Without this, any
     # cosmetic edit (whitespace, line endings, comments) to an already-applied
     # V*__*.sql blocks startup with FlywayValidateException — which crashed
@@ -53,15 +54,18 @@ spring:
       ssl.truststore.certificates: ${KAFKA_CA_CERT:}
     producer:
       acks: all
-      retries: 5
+      retries: 2147483647
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 120000
         compression.type: lz4
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
 portfolio:
+  internal:
+    token: ${INTERNAL_API_TOKEN:}
   opensearch:
     host: ${OPENSEARCH_HOST:localhost}
     port: ${OPENSEARCH_PORT:9200}
@@ -85,6 +89,19 @@ portfolio:
         article-updates: ${KAFKA_TOPIC_NOTIFICATION_ARTICLE:content.notification.article-updates.v1}
         feature-updates: ${KAFKA_TOPIC_NOTIFICATION_FEATURE:content.notification.feature-updates.v1}
         job-updates:     ${KAFKA_TOPIC_NOTIFICATION_JOBS:content.notification.job-updates.v1}
+  indexers:
+    search-url: ${SEARCH_INDEXER_BASE_URL:}
+    rag-url: ${RAG_INDEXER_BASE_URL:}
+    internal-token: ${INDEXER_INTERNAL_TOKEN:}
+  notification:
+    base-url: ${NOTIFICATION_SERVICE_BASE_URL:}
+    internal-token: ${NOTIFICATION_INTERNAL_TOKEN:}
+  gcp:
+    metadata-identity-url: ${GCP_METADATA_IDENTITY_URL:http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity}
+  indexing-relay:
+    enabled: ${INDEXING_RELAY_ENABLED:true}
+    interval-ms: ${INDEXING_RELAY_INTERVAL_MS:10000}
+    initial-delay-ms: ${INDEXING_RELAY_INITIAL_DELAY_MS:15000}
 
 springdoc:
   api-docs:
