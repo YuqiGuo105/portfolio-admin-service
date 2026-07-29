@@ -38,4 +38,5 @@ jobs:
         run: |
           URL="${{ vars.PUBLIC_MCP_URL || 'https://portfolio-mcp-server-702193211434.us-central1.run.app' }}"
           curl --fail --silent --show-error --retry 4 --retry-delay 5 \
-            --max-time 30 "${URL}/health" | jq -e '.ok == true'
+            --max-time 30 "${URL}/health" |
+            jq -e '.ok == true or ((.status // "") | ascii_downcase) == "ok"'
