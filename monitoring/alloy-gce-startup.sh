@@ -85,9 +85,28 @@ systemctl daemon-reload
 /usr/local/sbin/refresh-cloud-run-identity-token
 systemctl enable --now cloud-run-identity-token.timer
 
-echo "${TOKEN}" | docker login -u oauth2accesstoken --password-stdin https://gcr.io
+cat > /usr/local/sbin/update-portfolio-metrics-scraper <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+METADATA="http://metadata.google.internal/computeMetadata/v1"
+HEADER="Metadata-Flavor: Google"
+IMAGE="$(curl -fsS -H "${HEADER}" "${METADATA}/instance/attributes/container-image")"
+REGISTRY="${IMAGE%%/*}"
+TOKEN="$(curl -fsS -H "${HEADER}" \
+  "${METADATA}/instance/service-accounts/default/token" | jq -r '.access_token')"
+
+echo "${TOKEN}" | docker login -u oauth2accesstoken --password-stdin "https://${REGISTRY}"
 docker pull "${IMAGE}"
-docker logout https://gcr.io >/dev/null
+docker logout "${REGISTRY}" >/dev/null
+
+TARGET_IMAGE_ID="$(docker image inspect "${IMAGE}" --format '{{.Id}}')"
+CURRENT_IMAGE_ID="$(docker inspect portfolio-metrics-scraper \
+  --format '{{.Image}}' 2>/dev/null || true)"
+if [[ "${TARGET_IMAGE_ID}" == "${CURRENT_IMAGE_ID}" ]]; then
+  exit 0
+fi
+
 docker rm -f portfolio-metrics-scraper 2>/dev/null || true
 docker run -d \
   --name portfolio-metrics-scraper \
@@ -95,3 +114,34 @@ docker run -d \
   --env-file /etc/portfolio-alloy/runtime.env \
   --volume /var/run/cloud-run-identity:/var/run/cloud-run-identity:ro \
   "${IMAGE}"
+docker image prune -f >/dev/null
+EOF
+chmod 0755 /usr/local/sbin/update-portfolio-metrics-scraper
+
+cat > /etc/systemd/system/portfolio-metrics-scraper-update.service <<'EOF'
+[Unit]
+Description=Pull and atomically update the Portfolio Grafana Alloy scraper
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/update-portfolio-metrics-scraper
+EOF
+
+cat > /etc/systemd/system/portfolio-metrics-scraper-update.timer <<'EOF'
+[Unit]
+Description=Check for Portfolio Grafana Alloy updates every five minutes
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+/usr/local/sbin/update-portfolio-metrics-scraper
+systemctl enable --now portfolio-metrics-scraper-update.timer

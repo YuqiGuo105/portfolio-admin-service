@@ -17,6 +17,7 @@ prometheus.scrape "portfolio_services" {
     {"__address__" = "portfolio-admin-service-702193211434.us-central1.run.app", "job" = "portfolio-admin-service"},
     {"__address__" = "portfolio-agent-service-702193211434.us-central1.run.app", "job" = "portfolio-agent-service"},
     {"__address__" = "portfolio-mcp-gateway-702193211434.us-central1.run.app", "job" = "portfolio-mcp-gateway"},
+    {"__address__" = "knowledge-service-702193211434.us-central1.run.app", "job" = "knowledge-service"},
     {"__address__" = "portfolio-analytics-aggregator-702193211434.us-central1.run.app", "job" = "analytics-aggregator-service"},
     {"__address__" = "portfolio-analytics-alerts-702193211434.us-central1.run.app", "job" = "analytics-alerts-service"},
   ]

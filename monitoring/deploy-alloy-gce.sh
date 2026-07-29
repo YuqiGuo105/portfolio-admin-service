@@ -10,6 +10,8 @@ SERVICE_ACCOUNT="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 TOKEN_SECRET="${GRAFANA_TOKEN_SECRET:-GRAFANA_CLOUD_WRITE_TOKEN}"
 IMAGE="${ALLOY_IMAGE:-gcr.io/${PROJECT_ID}/portfolio-metrics-scraper:latest}"
 CUSTOM_AUDIENCE="${CLOUD_RUN_METRICS_AUDIENCE:-https://portfolio-metrics.internal}"
+BOOTSTRAP_IAM="${BOOTSTRAP_IAM:-true}"
+SKIP_IMAGE_BUILD="${SKIP_IMAGE_BUILD:-false}"
 FIREWALL_TAG="portfolio-metrics-no-ingress"
 FIREWALL_RULE="portfolio-metrics-scraper-deny-ingress"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -27,31 +29,37 @@ retry() {
   done
 }
 
-gcloud services enable compute.googleapis.com --project="${PROJECT_ID}"
+if [[ "${BOOTSTRAP_IAM}" == "true" ]]; then
+  gcloud services enable compute.googleapis.com --project="${PROJECT_ID}"
 
-if ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" \
-  --project="${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud iam service-accounts create "${SERVICE_ACCOUNT_NAME}" \
+  if ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" \
+    --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    gcloud iam service-accounts create "${SERVICE_ACCOUNT_NAME}" \
+      --project="${PROJECT_ID}" \
+      --display-name="Portfolio metrics scraper"
+  fi
+
+  retry gcloud secrets add-iam-policy-binding "${TOKEN_SECRET}" \
     --project="${PROJECT_ID}" \
-    --display-name="Portfolio metrics scraper"
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/secretmanager.secretAccessor" >/dev/null
+
+  retry gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/storage.objectViewer" >/dev/null
+
+  retry gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/artifactregistry.reader" >/dev/null
+
+  retry gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/logging.logWriter" >/dev/null
+elif ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" \
+  --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "Missing ${SERVICE_ACCOUNT}; run once with BOOTSTRAP_IAM=true."
+  exit 1
 fi
-
-retry gcloud secrets add-iam-policy-binding "${TOKEN_SECRET}" \
-  --project="${PROJECT_ID}" \
-  --member="serviceAccount:${SERVICE_ACCOUNT}" \
-  --role="roles/secretmanager.secretAccessor" >/dev/null
-
-retry gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SERVICE_ACCOUNT}" \
-  --role="roles/storage.objectViewer" >/dev/null
-
-retry gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SERVICE_ACCOUNT}" \
-  --role="roles/artifactregistry.reader" >/dev/null
-
-retry gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SERVICE_ACCOUNT}" \
-  --role="roles/logging.logWriter" >/dev/null
 
 for service in portfolio-search-indexer portfolio-rag-indexer; do
   if ! gcloud run services describe "${service}" \
@@ -70,22 +78,28 @@ for service in portfolio-search-indexer portfolio-rag-indexer; do
     --role="roles/run.invoker" >/dev/null
 done
 
-gcloud builds submit "${SCRIPT_DIR}/alloy" \
-  --project="${PROJECT_ID}" \
-  --tag="${IMAGE}" \
-  --quiet
+if [[ "${SKIP_IMAGE_BUILD}" != "true" ]]; then
+  gcloud builds submit "${SCRIPT_DIR}/alloy" \
+    --project="${PROJECT_ID}" \
+    --tag="${IMAGE}" \
+    --quiet
+fi
 
 if ! gcloud compute firewall-rules describe "${FIREWALL_RULE}" \
   --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  if [[ "${BOOTSTRAP_IAM}" != "true" ]]; then
+    echo "Missing ${FIREWALL_RULE}; run once with BOOTSTRAP_IAM=true."
+    exit 1
+  fi
   gcloud compute firewall-rules create "${FIREWALL_RULE}" \
-    --project="${PROJECT_ID}" \
-    --network="default" \
-    --direction="INGRESS" \
-    --priority="900" \
-    --action="DENY" \
-    --rules="all" \
-    --source-ranges="0.0.0.0/0" \
-    --target-tags="${FIREWALL_TAG}" >/dev/null
+      --project="${PROJECT_ID}" \
+      --network="default" \
+      --direction="INGRESS" \
+      --priority="900" \
+      --action="DENY" \
+      --rules="all" \
+      --source-ranges="0.0.0.0/0" \
+      --target-tags="${FIREWALL_TAG}" >/dev/null
 fi
 
 if gcloud compute instances describe "${INSTANCE_NAME}" \

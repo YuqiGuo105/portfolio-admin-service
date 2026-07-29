@@ -1,0 +1,91 @@
+name: Deploy monitoring scraper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "monitoring/**"
+      - ".github/workflows/deploy-monitoring.yml"
+      - ".github/workflows/monitoring-watchdog.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-portfolio-monitoring
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || 'portfolio-notify-prod' }}
+  DEPLOY_SHA: ${{ github.sha }}
+
+jobs:
+  validate:
+    name: Validate Alloy image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build monitoring image
+        uses: docker/build-push-action@v6
+        with:
+          context: monitoring/alloy
+          file: monitoring/alloy/Dockerfile
+          push: false
+          tags: portfolio-metrics-scraper:validation
+          cache-from: type=gha,scope=monitoring
+          cache-to: type=gha,mode=max,scope=monitoring
+
+  deploy:
+    name: Deploy Alloy on e2-micro
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Container Registry
+        run: gcloud auth configure-docker gcr.io --quiet
+
+      - name: Build and publish scraper image
+        run: |
+          SHA_IMAGE="gcr.io/${GCP_PROJECT_ID}/portfolio-metrics-scraper:sha-$(echo "${DEPLOY_SHA}" | cut -c1-7)"
+          LATEST_IMAGE="gcr.io/${GCP_PROJECT_ID}/portfolio-metrics-scraper:latest"
+          docker build -f monitoring/alloy/Dockerfile \
+            -t "${SHA_IMAGE}" \
+            -t "${LATEST_IMAGE}" \
+            monitoring/alloy
+          docker push "${SHA_IMAGE}"
+          docker push "${LATEST_IMAGE}"
+
+      - name: Verify production metrics after self-update
+        run: |
+          for attempt in $(seq 1 24); do
+            PAYLOAD="$(curl --fail --silent --show-error --max-time 30 \
+              "https://www.yuqi.site/api/metrics" || true)"
+            if echo "${PAYLOAD}" | jq -e \
+              '.summary.total >= 8 and .summary.down == 0' >/dev/null 2>&1; then
+              echo "${PAYLOAD}" | jq '{updatedAt, summary}'
+              exit 0
+            fi
+            echo "Attempt ${attempt}: waiting for the scraper self-update."
+            sleep 30
+          done
+          echo "Production metrics did not recover after the scraper image update."
+          exit 1

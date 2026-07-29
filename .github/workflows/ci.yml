@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: admin-platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build · Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Verify Maven reactor
+        run: mvn -B -ntp verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-platform-test-reports
+          path: "**/target/surefire-reports/**"
+          if-no-files-found: ignore
+
+  service-images:
+    name: Build image · ${{ matrix.module }}
+    needs: build-test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - admin-service
+          - search-indexer
+          - rag-indexer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build service image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.module }}/Dockerfile
+          push: false
+          tags: portfolio-${{ matrix.module }}:ci
+          cache-from: type=gha,scope=${{ matrix.module }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.module }}
+
+  monitoring-image:
+    name: Build Grafana Alloy image
+    needs: build-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build monitoring image
+        uses: docker/build-push-action@v6
+        with:
+          context: monitoring/alloy
+          file: monitoring/alloy/Dockerfile
+          push: false
+          tags: portfolio-metrics-scraper:ci
+          cache-from: type=gha,scope=monitoring
+          cache-to: type=gha,mode=max,scope=monitoring
