@@ -11,89 +11,15 @@ only over Kafka — no inter-service HTTP.
 
 ---
 
-## Architecture
+## System Design
 
-```mermaid
-flowchart TB
-    %% ================= External =================
-    Admin(["👤 Admin / MCP Gateway"])
+The component view separates the transactional content command plane from the
+Kafka event backbone, independently replayable search/RAG projections,
+notification delivery, and operator-approved recovery control.
 
-    %% ================= Admin Service =================
-    subgraph ADMIN_SVC["☕ admin-service :8081"]
-        API["🌐 Content REST API\n/api/admin/content/**\nCRUD · publish · reindex"]
-        AUTH["🔐 AdminAuthFilter\nSupabase JWT + X-Admin-Secret\nADMIN_ALLOWED_EMAILS gating"]
-        SVC["⚙️ ContentService\noptimistic concurrency\nversion snapshot · audit log"]
-        OUTBOX["📤 Outbox Publisher\npost-commit hook\nasync Kafka produce"]
-    end
+<img src="docs/architecture/content-platform.svg" alt="Content control and projection subsystem design" width="100%" />
 
-    %% ================= Persistence =================
-    PG@{ shape: cyl, label: "🐘 Supabase Postgres\n\nSource tables:\nBlogs · Projects · life_blogs · experience\n\nPlatform tables:\ncontent_versions · content_event_outbox\nindexing_jobs · content_admin_audit_logs" }
-
-    %% ================= Kafka =================
-    K_SEARCH@{ shape: das, label: "🟣 Kafka\ncontent.search.index.v1" }
-    K_RAG@{ shape: das, label: "🟣 Kafka\ncontent.rag.index.v1" }
-    K_NOTIF@{ shape: das, label: "🟣 Kafka\ncontent.notification.*.v1" }
-
-    %% ================= Search Indexer =================
-    subgraph SEARCH_SVC["🔍 search-indexer :8082"]
-        SEARCH_CONSUMER["📥 KafkaListener\nsearch-indexer-group"]
-        DOC2QUERY["✨ Gemini doc2query\nexpand terms"]
-        OS_WRITER["📝 OpenSearch Upsert\nidempotencyKey dedup"]
-    end
-
-    OPENSEARCH@{ shape: cyl, label: "🔎 OpenSearch\nportfolio_content_current" }
-
-    %% ================= RAG Indexer =================
-    subgraph RAG_SVC["🧩 rag-indexer :8083"]
-        RAG_CONSUMER["📥 KafkaListener\nrag-indexer-group"]
-        CHUNKER["✂️ Sliding-window Chunker\n2000 chars / 200 overlap"]
-        EMBEDDER["✨ OpenAI Embeddings\ntext-embedding-3-small · 1536d"]
-    end
-
-    RAG_DB@{ shape: cyl, label: "🐘 Supabase pgvector\nkb_documents · ACTIVE chunks" }
-
-    %% ================= Notification =================
-    NOTIF["🔔 portfolio-notification-service"]
-
-    %% ================= Connections =================
-    Admin --> AUTH
-    AUTH --> API
-    API --> SVC
-    SVC --> PG
-    PG --> OUTBOX
-    OUTBOX --> K_SEARCH
-    OUTBOX --> K_RAG
-    OUTBOX --> K_NOTIF
-
-    K_SEARCH --> SEARCH_CONSUMER
-    SEARCH_CONSUMER --> DOC2QUERY
-    DOC2QUERY --> OS_WRITER
-    OS_WRITER --> OPENSEARCH
-    SEARCH_CONSUMER -.->|fetch source doc| PG
-
-    K_RAG --> RAG_CONSUMER
-    RAG_CONSUMER --> CHUNKER
-    CHUNKER --> EMBEDDER
-    EMBEDDER --> RAG_DB
-    RAG_CONSUMER -.->|fetch source doc| PG
-
-    K_NOTIF --> NOTIF
-
-    %% ================= Styles =================
-    classDef service fill:#ffffff,stroke:#334155,stroke-width:1.2px,color:#0f172a
-    classDef database fill:#eff6ff,stroke:#2563eb,stroke-width:1.4px,color:#1e3a8a
-    classDef kafka fill:#faf5ff,stroke:#7c3aed,stroke-width:1.5px,color:#4c1d95
-    classDef external fill:#f9fafb,stroke:#6b7280,stroke-width:1.1px,color:#111827
-
-    class API,AUTH,SVC,OUTBOX,SEARCH_CONSUMER,DOC2QUERY,OS_WRITER,RAG_CONSUMER,CHUNKER,EMBEDDER service
-    class PG,OPENSEARCH,RAG_DB database
-    class K_SEARCH,K_RAG,K_NOTIF kafka
-    class Admin,NOTIF external
-
-    style ADMIN_SVC fill:#fffbeb,stroke:#d97706,stroke-width:2px,color:#78350f
-    style SEARCH_SVC fill:#ecfdf5,stroke:#059669,stroke-width:2px,color:#064e3b
-    style RAG_SVC fill:#f5f3ff,stroke:#8b5cf6,stroke-width:2px,color:#4c1d95
-```
+> **Maintain this diagram:** edit [`docs/architecture/content-platform.json`](docs/architecture/content-platform.json), then run `node scripts/render-architecture-diagram.mjs docs/architecture/content-platform.json`.
 
 **Design properties:**
 
@@ -112,6 +38,27 @@ flowchart TB
    Supabase tables (`"Blogs"`, `"Projects"`, …). It owns only its own
    admin-platform tables, managed by Flyway. Schema validation is off so
    sharing the database with the Next.js portfolio app is safe.
+
+## Production Operating Model
+
+This repository owns the portfolio **content write plane**. The write API is
+deliberately separated from read projections so publishing content does not
+couple editor latency to OpenSearch, embedding generation, or email delivery.
+
+Senior/staff-level invariants:
+
+| Invariant | Implementation expectation |
+|---|---|
+| Source of truth first | A content mutation commits the source table, immutable version snapshot, audit row, indexing jobs, and outbox rows in one database transaction |
+| Async projections | Search, RAG, and notification updates are Kafka-driven projections, never synchronous side effects of the editor request |
+| Replay-safe recovery | Failed or stuck outbox/indexing jobs can be retried by job id or content id; consumers upsert by deterministic idempotency key |
+| Schema ownership | Admin-service migrates only admin-owned tables; shared Portfolio tables are read/write adapted without Hibernate DDL changes |
+| Admin accountability | Every create/update/publish/retry action records actor, action, source, version, and request metadata |
+| Least privilege | Browser calls use Supabase JWT + allow-listed email; server-to-server jobs use `X-Admin-Secret` only when a JWT is not available |
+
+Operationally, Kafka can be cold or temporarily unavailable without losing the
+publish intent: the database outbox remains the recovery source and can be
+republished when the broker or indexers recover.
 
 ---
 

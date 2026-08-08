@@ -1,0 +1,87 @@
+{
+  "title": "Content Control & Projection Subsystem",
+  "subtitle": "Single source-of-truth transaction · transactional outbox · isolated Kafka projections",
+  "summary": "COMMAND PLANE · EVENT BACKBONE · REPLAYABLE READ MODELS",
+  "description": "Production content workflow from authenticated authoring through one Postgres transaction, outbox relay, independent Kafka topics, and idempotent projections.",
+  "theme": "light",
+  "validateNoOverlap": true,
+  "width": 2420,
+  "height": 1210,
+  "lanes": [
+    { "id": "command", "title": "01 · COMMAND PLANE", "subtitle": "authenticated CRUD · validation · versioning · audit", "x": 140, "y": 115, "w": 760, "h": 780, "accent": "orange", "fillOpacity": 0.04, "strokeOpacity": 0.3 },
+    { "id": "events", "title": "02 · EVENT BACKBONE", "subtitle": "leased outbox relay · independent topics · broker ACK", "x": 920, "y": 115, "w": 560, "h": 780, "accent": "purple", "fillOpacity": 0.04, "strokeOpacity": 0.3 },
+    { "id": "projections", "title": "03 · PROJECTION + DELIVERY PLANE", "subtitle": "consumer isolation · version guard · idempotent upsert · downstream handoff", "x": 1500, "y": 115, "w": 870, "h": 780, "accent": "cyan", "fillOpacity": 0.04, "strokeOpacity": 0.3 },
+    { "id": "recovery", "title": "04 · RECOVERY CONTROL", "subtitle": "inspect · retry · replay by source version · rebuild projection", "x": 480, "y": 950, "w": 1890, "h": 190, "accent": "red", "fillOpacity": 0.03, "strokeOpacity": 0.28 }
+  ],
+  "nodes": [
+    { "id": "operator", "shape": "actor", "icon": "user", "title": "Operator", "meta": "ADMIN / MCP", "accent": "orange", "x": 20, "y": 320, "w": 105, "h": 112 },
+    {
+      "id": "content-api", "shape": "cluster", "brand": "springboot", "brandColor": "#6db33f", "icon": "api",
+      "title": "Content API", "meta": "CLOUD RUN · HTTP", "accent": "orange", "x": 180, "y": 250, "w": 280, "h": 300,
+      "members": ["CRUD + Versioning", "Publish / Archive", "Validation", "Audit"]
+    },
+    {
+      "id": "store", "shape": "database", "brand": "postgresql", "brandColor": "#336791", "icon": "database",
+      "title": "Content Store + Outbox", "meta": "POSTGRES · ONE TRANSACTION", "accent": "blue", "x": 520, "y": 230, "w": 340, "h": 335,
+      "details": ["content source + immutable version", "audit + indexing job", "publish intent in outbox row", "idempotency key per source version", "canonical replay source"]
+    },
+    {
+      "id": "relay", "brand": "springboot", "brandColor": "#6db33f", "icon": "retry",
+      "title": "Outbox Relay", "meta": "LEASE · PUBLISH · ACK", "accent": "purple", "x": 970, "y": 275, "w": 250, "h": 215,
+      "details": ["post-commit fast path", "scheduled recovery", "bounded backoff", "SENT / FAILED / DLQ"]
+    },
+    { "id": "search-topic", "shape": "queue", "brand": "apachekafka", "brandColor": "#231f20", "icon": "queue", "title": "Search Indexing", "meta": "CONTENT.SEARCH.INDEX.V1", "metaBelow": true, "tubeHeight": 56, "accent": "purple", "x": 1250, "y": 165, "w": 200, "h": 82 },
+    { "id": "rag-topic", "shape": "queue", "brand": "apachekafka", "brandColor": "#231f20", "icon": "queue", "title": "RAG Indexing", "meta": "CONTENT.RAG.INDEX.V1", "metaBelow": true, "tubeHeight": 56, "accent": "purple", "x": 1250, "y": 345, "w": 200, "h": 82 },
+    { "id": "notify-topic", "shape": "queue", "brand": "apachekafka", "brandColor": "#231f20", "icon": "queue", "title": "Notification Dispatch", "meta": "CONTENT.NOTIFICATION.*.V1", "metaBelow": true, "tubeHeight": 56, "accent": "purple", "x": 1250, "y": 650, "w": 200, "h": 82 },
+    {
+      "id": "search-worker", "shape": "cluster", "brand": "springboot", "brandColor": "#6db33f", "icon": "search",
+      "title": "Search Projection", "meta": "SEARCH INDEXER CONSUMER", "accent": "cyan", "x": 1540, "y": 145, "w": 340, "h": 240,
+      "members": ["Schema Guard", "Version Guard", "Idempotent Upsert", "Delete / Rebuild"],
+      "resources": [{ "brand": "elasticsearch", "brandColor": "#005571", "brandColorMode": "source", "icon": "search", "title": "Search Index", "meta": "OPENSEARCH", "accent": "cyan" }]
+    },
+    {
+      "id": "rag-worker", "shape": "cluster", "brand": "springboot", "brandColor": "#6db33f", "icon": "model",
+      "title": "RAG Projection", "meta": "RAG INDEXER CONSUMER", "accent": "purple", "x": 1540, "y": 450, "w": 340, "h": 250,
+      "members": ["Chunk Content", "Generate Embedding", "Version Guard", "Idempotent Replace"],
+      "resources": [{ "brand": "postgresql", "brandColor": "#336791", "icon": "database", "title": "Vector Index", "meta": "PGVECTOR", "accent": "purple" }]
+    },
+    {
+      "id": "notification", "brand": "springboot", "brandColor": "#6db33f", "icon": "bell",
+      "title": "Notification Platform", "meta": "FAN-OUT CONSUMER", "accent": "red", "x": 1980, "y": 700, "w": 340, "h": 165,
+      "details": ["idempotent audience resolve", "durable recipient workflow"]
+    },
+    {
+      "id": "read-path", "brand": "nextdotjs", "brandColor": "#111827", "icon": "web",
+      "title": "Portfolio Read Path", "meta": "CONTENT · SEARCH · RAG", "accent": "green", "x": 1980, "y": 185, "w": 340, "h": 180,
+      "details": ["query independent projections", "canonical content fallback", "eventual consistency visible"]
+    },
+    {
+      "id": "recovery-api", "icon": "retry", "title": "Recovery API", "meta": "OPERATOR APPROVAL", "accent": "red", "x": 530, "y": 985, "w": 280, "h": 105,
+      "details": ["retry job · replay event · rebuild projection"]
+    },
+    { "id": "replay-topic", "shape": "queue", "brand": "apachekafka", "brandColor": "#231f20", "icon": "queue", "title": "Replay / DLQ", "meta": "BOUNDED RECOVERY", "metaBelow": true, "tubeHeight": 56, "accent": "red", "x": 940, "y": 995, "w": 240, "h": 82 },
+    {
+      "id": "job-state", "shape": "database", "brand": "postgresql", "brandColor": "#336791", "icon": "database",
+      "title": "Durable Job State", "meta": "STATUS · ATTEMPT · ERROR", "accent": "blue", "x": 1550, "y": 980, "w": 360, "h": 115,
+      "details": ["source version + projection checkpoint"]
+    }
+  ],
+  "edges": [
+    { "from": "operator", "to": "content-api", "kind": "primary", "label": "admin command", "routing": "smooth" },
+    { "from": "content-api", "to": "store", "kind": "primary", "label": "single transaction", "routing": "smooth" },
+    { "from": "store", "to": "relay", "kind": "data", "label": "committed outbox", "routing": "smooth" },
+    { "from": "relay", "to": "search-topic", "kind": "event", "label": "publish", "routing": "smooth" },
+    { "from": "relay", "to": "rag-topic", "kind": "event", "label": "publish", "routing": "smooth" },
+    { "from": "relay", "to": "notify-topic", "kind": "event", "label": "publish", "routing": "smooth" },
+    { "from": "search-topic", "to": "search-worker", "kind": "event", "label": "search group", "routing": "smooth" },
+    { "from": "rag-topic", "to": "rag-worker", "kind": "event", "label": "rag group", "routing": "smooth" },
+    { "from": "notify-topic", "to": "notification", "fromAt": { "x": 1450, "y": 678 }, "toAt": { "x": 1980, "y": 790 }, "kind": "event", "label": "fan-out group", "via": [{ "x": 1530, "y": 760 }, { "x": 1880, "y": 790 }], "labelAt": { "x": 1740, "y": 790 }, "routing": "smooth" },
+    { "from": "search-worker", "to": "read-path", "kind": "data", "label": "search read model", "routing": "smooth" },
+    { "from": "rag-worker", "to": "read-path", "kind": "data", "label": "grounding projection", "routing": "smooth" },
+    { "from": "recovery-api", "to": "replay-topic", "kind": "recovery", "label": "bounded replay", "routing": "smooth" },
+    { "from": "replay-topic", "to": "search-worker", "fromSide": "top", "toAt": { "x": 1540, "y": 265 }, "kind": "recovery", "label": "rebuild search", "via": [{ "x": 1060, "y": 925 }, { "x": 1490, "y": 900 }, { "x": 1490, "y": 360 }], "labelAt": { "x": 1490, "y": 560 }, "routing": "smooth" },
+    { "from": "replay-topic", "to": "rag-worker", "fromSide": "right", "toSide": "bottom", "kind": "recovery", "label": "rebuild vectors", "via": [{ "x": 1210, "y": 930 }, { "x": 1710, "y": 900 }], "labelAt": { "x": 1380, "y": 925 }, "routing": "smooth" },
+    { "from": "search-worker", "to": "job-state", "fromSide": "bottom", "toSide": "top", "kind": "data", "label": "checkpoint", "via": [{ "x": 1515, "y": 410 }, { "x": 1515, "y": 900 }, { "x": 1730, "y": 940 }], "labelAt": { "x": 1515, "y": 610 }, "routing": "smooth" },
+    { "from": "rag-worker", "to": "job-state", "fromSide": "bottom", "toSide": "top", "kind": "data", "label": "checkpoint", "routing": "smooth" }
+  ]
+}
