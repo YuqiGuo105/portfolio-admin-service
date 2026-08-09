@@ -43,6 +43,8 @@ spring:
     validate-on-migrate: false
 
   kafka:
+    admin:
+      fail-fast: false
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     properties:
       security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
@@ -77,6 +79,10 @@ portfolio:
   operations:
     projection:
       enabled: ${OPERATION_TIMELINE_PROJECTION_ENABLED:true}
+    topic:
+      partitions: ${OPERATION_TIMELINE_TOPIC_PARTITIONS:1}
+      replicas: ${OPERATION_TIMELINE_TOPIC_REPLICAS:1}
+      retention-ms: ${OPERATION_TIMELINE_TOPIC_RETENTION_MS:1209600000}
   internal:
     token: ${INTERNAL_API_TOKEN:}
   opensearch:
