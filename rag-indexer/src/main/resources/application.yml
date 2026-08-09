@@ -45,10 +45,13 @@ spring:
 
 portfolio:
   internal-token: ${INTERNAL_API_TOKEN:}
+  operations:
+    ingest-url: ${OPERATIONS_INGEST_URL:}
+    internal-token: ${INTERNAL_API_TOKEN:}
+    timeout-ms: ${OPERATIONS_INGEST_TIMEOUT_MS:750}
   kafka:
     topics:
       rag-index: ${KAFKA_TOPIC_RAG_INDEX:content.rag.index.v1}
-      operations: ${KAFKA_TOPIC_OPERATION_EVENTS:platform.operation.events.v1}
   gemini:
     api-key: ${GEMINI_API_KEY:}
     base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}

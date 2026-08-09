@@ -3,7 +3,6 @@ package site.yuqi.admin.operations;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -15,10 +14,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class OperationEventPublisher {
 
-    private final KafkaTemplate<String, Object> kafka;
-
-    @Value("${portfolio.kafka.topics.operations:platform.operation.events.v1}")
-    private String topic;
+    private final OperationTimelineProjector projector;
 
     @Value("${spring.application.name:portfolio-admin-service}")
     private String service;
@@ -45,24 +41,20 @@ public class OperationEventPublisher {
                 new OperationEvent.Actor("system".equals(actorId) ? "SERVICE" : "USER", actorId),
                 new OperationEvent.Subject(subjectType, subjectId, version),
                 service, status, 1, null, attributes == null ? Map.of() : Map.copyOf(attributes));
-        kafka.send(topic, correlationId, event).whenComplete((result, error) -> {
-            if (error != null) {
-                log.warn("Operation event projection failed type={} eventId={}: {}",
-                        eventType, event.eventId(), error.getMessage());
-            }
-        });
+        projectFailOpen(event);
         return event;
     }
 
     public void publishExternal(OperationEvent event) {
-        String key = event.correlationId() == null || event.correlationId().isBlank()
-                ? event.eventId()
-                : event.correlationId();
-        kafka.send(topic, key, event).whenComplete((result, error) -> {
-            if (error != null) {
-                log.warn("External operation event projection failed type={} eventId={}: {}",
-                        event.eventType(), event.eventId(), error.getMessage());
-            }
-        });
+        projectFailOpen(event);
+    }
+
+    private void projectFailOpen(OperationEvent event) {
+        try {
+            projector.project(event);
+        } catch (Exception error) {
+            log.warn("Operation event projection failed type={} eventId={}: {}",
+                    event.eventType(), event.eventId(), error.getMessage());
+        }
     }
 }

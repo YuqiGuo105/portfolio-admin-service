@@ -45,6 +45,10 @@ spring:
 
 portfolio:
   internal-token: ${INTERNAL_API_TOKEN:}
+  operations:
+    ingest-url: ${OPERATIONS_INGEST_URL:}
+    internal-token: ${INTERNAL_API_TOKEN:}
+    timeout-ms: ${OPERATIONS_INGEST_TIMEOUT_MS:750}
   opensearch:
     host: ${OPENSEARCH_HOST:localhost}
     port: ${OPENSEARCH_PORT:9200}
@@ -54,7 +58,6 @@ portfolio:
   kafka:
     topics:
       search-index: ${KAFKA_TOPIC_SEARCH_INDEX:content.search.index.v1}
-      operations: ${KAFKA_TOPIC_OPERATION_EVENTS:platform.operation.events.v1}
   # Document-expansion enrichment: one cheap Gemini call per document at index
   # time populates the analyzed `search_terms` field. Query time stays pure
   # BM25 with zero API cost. Fully fail-open — no key / disabled => no terms.
