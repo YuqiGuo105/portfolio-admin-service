@@ -62,8 +62,21 @@ spring:
         compression.type: lz4
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        isolation.level: read_committed
+    listener:
+      ack-mode: manual_immediate
+      missing-topics-fatal: false
 
 portfolio:
+  operations:
+    projection:
+      enabled: ${OPERATION_TIMELINE_PROJECTION_ENABLED:true}
   internal:
     token: ${INTERNAL_API_TOKEN:}
   opensearch:
@@ -83,6 +96,7 @@ portfolio:
     allowed-emails: ${ADMIN_ALLOWED_EMAILS:}
   kafka:
     topics:
+      operations: ${KAFKA_TOPIC_OPERATION_EVENTS:platform.operation.events.v1}
       search-index: ${KAFKA_TOPIC_SEARCH_INDEX:content.search.index.v1}
       rag-index:    ${KAFKA_TOPIC_RAG_INDEX:content.rag.index.v1}
       notification:

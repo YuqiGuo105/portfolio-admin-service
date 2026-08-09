@@ -33,6 +33,12 @@ spring:
       properties:
         spring.json.value.default.type: site.yuqi.searchindexer.events.ContentIndexEvent
         spring.json.use.type.headers: false
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true
     listener:
       ack-mode: MANUAL_IMMEDIATE
       concurrency: 2
@@ -48,6 +54,7 @@ portfolio:
   kafka:
     topics:
       search-index: ${KAFKA_TOPIC_SEARCH_INDEX:content.search.index.v1}
+      operations: ${KAFKA_TOPIC_OPERATION_EVENTS:platform.operation.events.v1}
   # Document-expansion enrichment: one cheap Gemini call per document at index
   # time populates the analyzed `search_terms` field. Query time stays pure
   # BM25 with zero API cost. Fully fail-open — no key / disabled => no terms.

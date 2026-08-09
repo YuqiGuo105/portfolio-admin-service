@@ -17,6 +17,7 @@ import site.yuqi.admin.domain.SourceType;
 import site.yuqi.admin.domain.Topic;
 import site.yuqi.admin.events.IndexEventPublisher;
 import site.yuqi.admin.events.NotificationEventPublisher;
+import site.yuqi.admin.operations.OperationEventPublisher;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -46,6 +47,7 @@ public class ContentService {
     private final AuditLogService auditLogService;
     private final IndexEventPublisher indexEventPublisher;
     private final NotificationEventPublisher notificationEventPublisher;
+    private final OperationEventPublisher operationEventPublisher;
 
     // ----- READS -----------------------------------------------------------
 
@@ -173,6 +175,8 @@ public class ContentService {
         auditLogService.log(actor, AuditAction.PUBLISH, type, sourceId, version.getVersion(),
                 null, adapter.toSnapshot(content));
 
+        publishOperationAfterCommit(type, sourceId, version.getVersion(), outbox, actor);
+
         // Fire all Kafka events only AFTER the DB transaction commits, so consumers
         // never see an event for a row that does not yet exist (or that rolled back).
         // If Kafka is down, indexing_jobs rows stay PENDING (polled later) and
@@ -223,6 +227,25 @@ public class ContentService {
             });
         } else {
             notificationEventPublisher.publish(outbox, content, version, topic);
+        }
+    }
+
+    private void publishOperationAfterCommit(SourceType type, String sourceId, int version,
+                                             ContentEventOutbox outbox, String actor) {
+        Runnable publish = () -> operationEventPublisher.publish(
+                "content.version.published", "SUCCEEDED", type.name(), sourceId, version,
+                null, outbox.getIdempotencyKey(),
+                Map.of("contentId", sourceId, "outboxEventId", outbox.getId().toString(),
+                        "actorType", actor == null || actor.isBlank() ? "SERVICE" : "ADMIN"));
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publish.run();
+                }
+            });
+        } else {
+            publish.run();
         }
     }
 }

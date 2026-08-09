@@ -88,6 +88,7 @@ import static org.mockito.Mockito.when;
         "spring.datasource.username=sa",
         "spring.datasource.password=",
         "portfolio.opensearch.worker.enabled=false",
+        "portfolio.operations.projection.enabled=false",
         "portfolio.outbox.worker.enabled=false",
         // Notification topics
         "portfolio.kafka.topics.notification.article-updates=content.notification.article-updates.v1",

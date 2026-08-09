@@ -7,6 +7,8 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import site.yuqi.admin.domain.IndexingJob;
 import site.yuqi.admin.domain.JobType;
+import site.yuqi.admin.operations.OperationContext;
+import site.yuqi.admin.operations.OperationEventPublisher;
 import site.yuqi.admin.service.IndexingJobService;
 
 import java.time.Instant;
@@ -31,6 +33,7 @@ public class IndexEventPublisher {
     private final KafkaTemplate<String, ContentIndexEvent> kafkaTemplate;
     private final IndexingJobService jobs;
     private final IndexerWakeClient wakeClient;
+    private final OperationEventPublisher operations;
 
     @Value("${portfolio.kafka.topics.search-index}")
     private String searchTopic;
@@ -39,10 +42,15 @@ public class IndexEventPublisher {
     private String ragTopic;
 
     public CompletableFuture<?> publish(IndexingJob job) {
+        OperationContext context = OperationContext.current();
         jobs.markIndexingJobDispatching(job.getId(), 300);
         ContentIndexEvent event = ContentIndexEvent.builder()
                 .eventId(UUID.randomUUID().toString())
                 .occurredAt(Instant.now())
+                .traceId(context.traceId())
+                .correlationId(context.correlationId())
+                .causationId(job.getId().toString())
+                .schemaVersion(1)
                 .sourceType(job.getSourceType())
                 .sourceId(job.getSourceIdText())
                 .sourceVersion(job.getSourceVersion())
@@ -54,9 +62,19 @@ public class IndexEventPublisher {
         String topic = job.getJobType() == JobType.SEARCH_INDEX ? searchTopic : ragTopic;
         String partitionKey = job.getSourceType() + ":" + job.getSourceIdText();
 
+        operations.publish("content." + job.getJobType().name().toLowerCase() + ".dispatched",
+                "RUNNING", job.getSourceType(), job.getSourceIdText(), job.getSourceVersion(),
+                job.getId().toString(), job.getIdempotencyKey(),
+                java.util.Map.of("indexingJobId", job.getId().toString(), "topic", topic));
+
         return kafkaTemplate.send(topic, partitionKey, event).whenCompleteAsync((result, ex) -> {
             if (ex != null) {
                 jobs.markIndexingJobFailed(job.getId(), ex.getMessage());
+                operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                        "content." + job.getJobType().name().toLowerCase() + ".dispatch_failed",
+                        "FAILED", job.getSourceType(), job.getSourceIdText(), job.getSourceVersion(),
+                        event.getEventId(), job.getIdempotencyKey(),
+                        java.util.Map.of("errorType", ex.getClass().getSimpleName()));
                 log.error("Failed to publish {} event for {}:{}",
                         job.getJobType(), job.getSourceType(), job.getSourceIdText(), ex);
                 return;
@@ -65,6 +83,12 @@ public class IndexEventPublisher {
                     job.getJobType(), topic,
                     result.getRecordMetadata().partition(),
                     result.getRecordMetadata().offset());
+            operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                    "content." + job.getJobType().name().toLowerCase() + ".published",
+                    "SUCCEEDED", job.getSourceType(), job.getSourceIdText(), job.getSourceVersion(),
+                    event.getEventId(), job.getIdempotencyKey(),
+                    java.util.Map.of("topic", topic, "partition", result.getRecordMetadata().partition(),
+                            "offset", result.getRecordMetadata().offset()));
             if (!wakeClient.wakeAndAwait(job)) {
                 jobs.markIndexingJobFailed(job.getId(), "Indexer did not complete within wake lease");
             }

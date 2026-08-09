@@ -29,6 +29,11 @@ public class ContentIndexEvent {
     /** When the event was produced. */
     private Instant occurredAt;
 
+    private String traceId;
+    private String correlationId;
+    private String causationId;
+    private int schemaVersion;
+
     /** BLOG / PROJECT / LIFE_BLOG / EXPERIENCE */
     private String sourceType;
 

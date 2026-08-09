@@ -14,6 +14,7 @@ import site.yuqi.ragindexer.rag.ContentChunker;
 import site.yuqi.ragindexer.rag.KbDocumentWriter;
 import site.yuqi.ragindexer.source.ContentFetcher;
 import site.yuqi.ragindexer.source.RagSource;
+import site.yuqi.ragindexer.operations.OperationEventPublisher;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +41,7 @@ public class RagIndexConsumer {
     private final ContentChunker chunker;
     private final GeminiEmbeddingClient embedder;
     private final KbDocumentWriter writer;
+    private final OperationEventPublisher operations;
 
     @KafkaListener(
             topics = "${portfolio.kafka.topics.rag-index}",
@@ -47,6 +49,7 @@ public class RagIndexConsumer {
             containerFactory = "kafkaListenerContainerFactory"
     )
     public void onEvent(ConsumerRecord<String, ContentIndexEvent> record, Acknowledgment ack) {
+        long startedNanos = System.nanoTime();
         ContentIndexEvent evt = record.value();
         if (evt == null) {
             log.warn("Null event payload at offset={}", record.offset());
@@ -71,6 +74,8 @@ public class RagIndexConsumer {
             if (jobs.isDone(jobId)) {
                 log.info("RAG_INDEX job {} already DONE; acknowledging replay", jobId);
                 ack.acknowledge();
+                operations.publish(evt, "content.rag_projection.replayed", "SUCCEEDED", startedNanos,
+                        java.util.Map.of("indexingJobId", jobId.toString(), "deduplicated", true));
                 return;
             }
             jobs.markProcessing(jobId);
@@ -81,6 +86,8 @@ public class RagIndexConsumer {
                 writer.supersedeAll(evt.getSourceType(), evt.getSourceId());
                 jobs.markDone(jobId);
                 ack.acknowledge();
+                operations.publish(evt, "content.rag_projection.completed", "SUCCEEDED", startedNanos,
+                        java.util.Map.of("indexingJobId", jobId.toString(), "chunks", 0));
                 return;
             }
 
@@ -93,6 +100,8 @@ public class RagIndexConsumer {
                 writer.supersedeAll(source.getSourceType(), source.getSourceId());
                 jobs.markDone(jobId);
                 ack.acknowledge();
+                operations.publish(evt, "content.rag_projection.completed", "SUCCEEDED", startedNanos,
+                        java.util.Map.of("indexingJobId", jobId.toString(), "chunks", 0));
                 return;
             }
 
@@ -104,6 +113,8 @@ public class RagIndexConsumer {
             writer.supersedeAndInsert(source, evt.getSourceVersion(), chunks, embeddings);
             jobs.markDone(jobId);
             ack.acknowledge();
+            operations.publish(evt, "content.rag_projection.completed", "SUCCEEDED", startedNanos,
+                    java.util.Map.of("indexingJobId", jobId.toString(), "chunks", chunks.size()));
         } catch (Exception e) {
             log.error("RAG_INDEX job {} failed: {}", jobId, e.getMessage(), e);
             try {
@@ -111,6 +122,8 @@ public class RagIndexConsumer {
             } catch (Exception inner) {
                 log.error("Could not mark job {} as FAILED: {}", jobId, inner.getMessage());
             }
+            operations.publish(evt, "content.rag_projection.failed", "FAILED", startedNanos,
+                    java.util.Map.of("indexingJobId", jobId.toString(), "errorType", e.getClass().getSimpleName()));
             throw new IllegalStateException("RAG_INDEX job failed: " + jobId, e);
         }
     }

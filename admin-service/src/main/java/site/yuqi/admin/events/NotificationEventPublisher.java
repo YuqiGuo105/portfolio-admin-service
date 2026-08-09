@@ -9,6 +9,8 @@ import site.yuqi.admin.adapter.NormalizedContent;
 import site.yuqi.admin.domain.ContentEventOutbox;
 import site.yuqi.admin.domain.OutboxEventType;
 import site.yuqi.admin.domain.Topic;
+import site.yuqi.admin.operations.OperationContext;
+import site.yuqi.admin.operations.OperationEventPublisher;
 import site.yuqi.admin.service.OutboxService;
 
 import java.time.Instant;
@@ -38,6 +40,7 @@ public class NotificationEventPublisher {
     private final KafkaTemplate<String, ContentPublishedEvent> kafkaTemplate;
     private final OutboxService outboxService;
     private final NotificationDeliveryClient deliveryClient;
+    private final OperationEventPublisher operations;
 
     @Value("${portfolio.kafka.topics.notification.article-updates}")
     private String articleUpdatesTopic;
@@ -50,6 +53,7 @@ public class NotificationEventPublisher {
 
     public CompletableFuture<?> publish(ContentEventOutbox outbox, NormalizedContent content,
                         int version, Topic notificationTopic) {
+        OperationContext context = OperationContext.current();
         outboxService.markOutboxEventProcessing(outbox.getId(), 60);
         String idempotencyKey = OutboxService.idempotencyKey(
                 OutboxEventType.CONTENT_PUBLISHED,
@@ -60,6 +64,10 @@ public class NotificationEventPublisher {
         ContentPublishedEvent event = ContentPublishedEvent.builder()
                 .eventId(outbox.getId().toString())
                 .occurredAt(outbox.getCreatedAt() == null ? Instant.now() : outbox.getCreatedAt())
+                .traceId(context.traceId())
+                .correlationId(context.correlationId())
+                .causationId(outbox.getId().toString())
+                .schemaVersion(1)
                 .sourceType(content.getSourceType().name())
                 .sourceId(content.getSourceId())
                 .sourceVersion(version)
@@ -87,6 +95,10 @@ public class NotificationEventPublisher {
         ContentPublishedEvent event = ContentPublishedEvent.builder()
                 .eventId(outbox.getId().toString())
                 .occurredAt(outbox.getCreatedAt() == null ? Instant.now() : outbox.getCreatedAt())
+                .traceId(asString(payload.get("traceId")))
+                .correlationId(asString(payload.get("correlationId")))
+                .causationId(asString(payload.get("causationId")))
+                .schemaVersion(1)
                 .sourceType(sourceType)
                 .sourceId(sourceId)
                 .sourceVersion(outbox.getSourceVersion())
@@ -108,11 +120,20 @@ public class NotificationEventPublisher {
 
         String kafkaTopic = resolveKafkaTopic(notificationTopic);
 
+        operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                "content.notification.dispatched", "RUNNING", event.getSourceType(),
+                event.getSourceId(), event.getSourceVersion(), event.getCausationId(), event.getIdempotencyKey(),
+                Map.of("topic", kafkaTopic));
+
         return kafkaTemplate.send(kafkaTopic, partitionKey, event).whenCompleteAsync((result, ex) -> {
             if (ex != null) {
                 outboxService.markOutboxEventFailed(outbox.getId(), ex.getMessage());
                 log.error("Failed to publish notification outbox event {} topic={}",
                         outbox.getId(), kafkaTopic, ex);
+                operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                        "content.notification.dispatch_failed", "FAILED", event.getSourceType(),
+                        event.getSourceId(), event.getSourceVersion(), event.getEventId(), event.getIdempotencyKey(),
+                        Map.of("errorType", ex.getClass().getSimpleName()));
             } else if (deliveryClient.deliver(event)) {
                 outboxService.markOutboxEventSent(outbox.getId());
                 log.info("Published notification event for {}:{} v{} → topic={} partition={} offset={}",
@@ -120,6 +141,11 @@ public class NotificationEventPublisher {
                         kafkaTopic,
                         result.getRecordMetadata().partition(),
                         result.getRecordMetadata().offset());
+                operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                        "content.notification.published", "SUCCEEDED", event.getSourceType(),
+                        event.getSourceId(), event.getSourceVersion(), event.getEventId(), event.getIdempotencyKey(),
+                        Map.of("topic", kafkaTopic, "partition", result.getRecordMetadata().partition(),
+                                "offset", result.getRecordMetadata().offset()));
             } else {
                 outboxService.markOutboxEventFailed(outbox.getId(),
                         "Notification worker wake/delivery did not complete");

@@ -11,6 +11,7 @@ import site.yuqi.admin.domain.OutboxEventType;
 import site.yuqi.admin.domain.OutboxStatus;
 import site.yuqi.admin.domain.SourceType;
 import site.yuqi.admin.domain.Topic;
+import site.yuqi.admin.operations.OperationContext;
 import site.yuqi.admin.repo.ContentEventOutboxRepository;
 
 import java.time.Instant;
@@ -47,6 +48,7 @@ public class OutboxService {
 
         return repository.findByIdempotencyKey(key).orElseGet(() -> {
             UUID id = UUID.randomUUID();
+            OperationContext context = OperationContext.current();
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("eventId", id.toString());
             payload.put("eventType", OutboxEventType.CONTENT_PUBLISHED.name());
@@ -60,6 +62,9 @@ public class OutboxService {
             payload.put("imageUrl", content.getImageUrl());
             payload.put("createdAt", Instant.now().toString());
             payload.put("idempotencyKey", key);
+            payload.put("traceId", context.traceId());
+            payload.put("correlationId", context.correlationId());
+            payload.put("causationId", id.toString());
             payload.put("metadata", Map.of(
                     "category", content.getCategory() == null ? "" : content.getCategory(),
                     "tags", content.getTags() == null ? List.of() : content.getTags()));

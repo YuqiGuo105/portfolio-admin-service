@@ -10,6 +10,7 @@ import site.yuqi.searchindexer.events.ContentIndexEvent;
 import site.yuqi.searchindexer.jobs.IndexingJobUpdater;
 import site.yuqi.searchindexer.opensearch.OpenSearchIndexClient;
 import site.yuqi.searchindexer.enrich.SearchTermsGenerator;
+import site.yuqi.searchindexer.operations.OperationEventPublisher;
 import site.yuqi.searchindexer.source.ContentFetcher;
 
 import java.util.Map;
@@ -37,6 +38,7 @@ public class SearchIndexConsumer {
     private final ContentFetcher fetcher;
     private final OpenSearchIndexClient openSearch;
     private final SearchTermsGenerator searchTerms;
+    private final OperationEventPublisher operations;
 
     @KafkaListener(
             topics = "${portfolio.kafka.topics.search-index}",
@@ -44,6 +46,7 @@ public class SearchIndexConsumer {
             containerFactory = "kafkaListenerContainerFactory"
     )
     public void onEvent(ConsumerRecord<String, ContentIndexEvent> record, Acknowledgment ack) {
+        long startedNanos = System.nanoTime();
         ContentIndexEvent evt = record.value();
         if (evt == null) {
             log.warn("Null event payload, skipping at offset={}", record.offset());
@@ -67,6 +70,8 @@ public class SearchIndexConsumer {
             if (jobs.isDone(jobId)) {
                 log.info("SEARCH_INDEX job {} already DONE; acknowledging replay", jobId);
                 ack.acknowledge();
+                operations.publish(evt, "content.search_projection.replayed", "SUCCEEDED", startedNanos,
+                        Map.of("indexingJobId", jobId.toString(), "deduplicated", true));
                 return;
             }
             jobs.markProcessing(jobId);
@@ -94,6 +99,8 @@ public class SearchIndexConsumer {
 
             jobs.markDone(jobId);
             ack.acknowledge();
+            operations.publish(evt, "content.search_projection.completed", "SUCCEEDED", startedNanos,
+                    Map.of("indexingJobId", jobId.toString(), "documentId", documentId));
         } catch (Exception e) {
             log.error("SEARCH_INDEX job {} failed: {}", jobId, e.getMessage(), e);
             try {
@@ -101,6 +108,8 @@ public class SearchIndexConsumer {
             } catch (Exception inner) {
                 log.error("Could not mark job {} as FAILED: {}", jobId, inner.getMessage());
             }
+            operations.publish(evt, "content.search_projection.failed", "FAILED", startedNanos,
+                    Map.of("indexingJobId", jobId.toString(), "errorType", e.getClass().getSimpleName()));
             throw new IllegalStateException("SEARCH_INDEX job failed: " + jobId, e);
         }
     }

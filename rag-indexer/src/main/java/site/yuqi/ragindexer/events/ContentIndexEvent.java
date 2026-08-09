@@ -20,6 +20,10 @@ import java.time.Instant;
 public class ContentIndexEvent {
     private String eventId;
     private Instant occurredAt;
+    private String traceId;
+    private String correlationId;
+    private String causationId;
+    private int schemaVersion;
     private String sourceType;       // BLOG / PROJECT / LIFE_BLOG / EXPERIENCE
     private String sourceId;
     private int sourceVersion;

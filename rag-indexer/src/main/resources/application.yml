@@ -33,6 +33,12 @@ spring:
       properties:
         spring.json.value.default.type: site.yuqi.ragindexer.events.ContentIndexEvent
         spring.json.use.type.headers: false
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true
     listener:
       ack-mode: MANUAL_IMMEDIATE
       concurrency: 1   # embedding per-request rate matters more than parallelism
@@ -42,6 +48,7 @@ portfolio:
   kafka:
     topics:
       rag-index: ${KAFKA_TOPIC_RAG_INDEX:content.rag.index.v1}
+      operations: ${KAFKA_TOPIC_OPERATION_EVENTS:platform.operation.events.v1}
   gemini:
     api-key: ${GEMINI_API_KEY:}
     base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
