@@ -1,6 +1,9 @@
 package site.yuqi.admin.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.opensearch.OpenSearchStatusException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,6 +16,7 @@ import site.yuqi.admin.operations.OperationEventPublisher;
 import site.yuqi.admin.operations.OperationTimelineService;
 
 import java.io.IOException;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/admin/operations/timeline")
@@ -24,8 +28,17 @@ public class OperationTimelineController {
 
     @GetMapping
     public ResponseEntity<?> find(@RequestParam(name = "q", defaultValue = "") String query,
-                                  @RequestParam(defaultValue = "250") int limit) throws IOException {
-        return ResponseEntity.ok(timeline.find(query, limit));
+                                  @RequestParam(defaultValue = "250") int limit) {
+        try {
+            return ResponseEntity.ok(timeline.find(query, limit));
+        } catch (IOException | OpenSearchStatusException unavailable) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .header(HttpHeaders.RETRY_AFTER, "30")
+                    .body(Map.of(
+                            "error", "timeline_projection_unavailable",
+                            "message", "The operations search projection is rebuilding or temporarily unavailable.",
+                            "retryable", true));
+        }
     }
 
     @PostMapping("/events")
