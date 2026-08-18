@@ -41,6 +41,7 @@ public class NotificationEventPublisher {
     private final OutboxService outboxService;
     private final NotificationDeliveryClient deliveryClient;
     private final OperationEventPublisher operations;
+    private final BoundedRelayExecutor relayExecutor;
 
     @Value("${portfolio.kafka.topics.notification.article-updates}")
     private String articleUpdatesTopic;
@@ -125,32 +126,58 @@ public class NotificationEventPublisher {
                 event.getSourceId(), event.getSourceVersion(), event.getCausationId(), event.getIdempotencyKey(),
                 Map.of("topic", kafkaTopic));
 
-        return kafkaTemplate.send(kafkaTopic, partitionKey, event).whenCompleteAsync((result, ex) -> {
-            if (ex != null) {
-                outboxService.markOutboxEventFailed(outbox.getId(), ex.getMessage());
-                log.error("Failed to publish notification outbox event {} topic={}",
-                        outbox.getId(), kafkaTopic, ex);
-                operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
-                        "content.notification.dispatch_failed", "FAILED", event.getSourceType(),
-                        event.getSourceId(), event.getSourceVersion(), event.getEventId(), event.getIdempotencyKey(),
-                        Map.of("errorType", ex.getClass().getSimpleName()));
-            } else if (deliveryClient.deliver(event)) {
-                outboxService.markOutboxEventSent(outbox.getId());
-                log.info("Published notification event for {}:{} v{} → topic={} partition={} offset={}",
-                        outbox.getSourceType(), outbox.getSourceIdText(), outbox.getSourceVersion(),
-                        kafkaTopic,
-                        result.getRecordMetadata().partition(),
-                        result.getRecordMetadata().offset());
-                operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
-                        "content.notification.published", "SUCCEEDED", event.getSourceType(),
-                        event.getSourceId(), event.getSourceVersion(), event.getEventId(), event.getIdempotencyKey(),
-                        Map.of("topic", kafkaTopic, "partition", result.getRecordMetadata().partition(),
-                                "offset", result.getRecordMetadata().offset()));
-            } else {
-                outboxService.markOutboxEventFailed(outbox.getId(),
-                        "Notification worker wake/delivery did not complete");
+        return kafkaTemplate.send(kafkaTopic, partitionKey, event).whenComplete((result, ex) -> {
+            if (!relayExecutor.tryExecute(() -> handlePublishResult(outbox, event, kafkaTopic, result, ex))) {
+                log.warn("Notification relay saturated for outbox {}; lease replay will recover it", outbox.getId());
             }
         });
+    }
+
+    private void handlePublishResult(ContentEventOutbox outbox, ContentPublishedEvent event, String kafkaTopic,
+                                     org.springframework.kafka.support.SendResult<String, ContentPublishedEvent> result,
+                                     Throwable ex) {
+        if (ex != null) {
+            outboxService.markOutboxEventFailed(outbox.getId(), ex.getMessage());
+            log.error("Failed to publish notification outbox event {} topic={}",
+                    outbox.getId(), kafkaTopic, ex);
+            operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                    "content.notification.dispatch_failed", "FAILED", event.getSourceType(),
+                    event.getSourceId(), event.getSourceVersion(), event.getEventId(), event.getIdempotencyKey(),
+                    Map.of("errorType", ex.getClass().getSimpleName()));
+        } else {
+            // SENT means the broker durably accepted the event. Consumer delivery has
+            // its own idempotent recipient ledger and must not cause broker re-publish.
+            outboxService.markOutboxEventSent(outbox.getId());
+            log.info("Published notification event for {}:{} v{} → topic={} partition={} offset={}",
+                    outbox.getSourceType(), outbox.getSourceIdText(), outbox.getSourceVersion(),
+                    kafkaTopic,
+                    result.getRecordMetadata().partition(),
+                    result.getRecordMetadata().offset());
+            operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                    "content.notification.published", "SUCCEEDED", event.getSourceType(),
+                    event.getSourceId(), event.getSourceVersion(), event.getEventId(), event.getIdempotencyKey(),
+                    Map.of("topic", kafkaTopic, "partition", result.getRecordMetadata().partition(),
+                            "offset", result.getRecordMetadata().offset()));
+            if (!relayExecutor.tryExecute(() -> wakeDelivery(event, outbox, kafkaTopic))) {
+                log.warn("Notification worker wake did not complete for outbox {}; Kafka event remains SENT",
+                        outbox.getId());
+                operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                        "content.notification.wake_deferred", "PENDING", event.getSourceType(),
+                        event.getSourceId(), event.getSourceVersion(), event.getEventId(),
+                        event.getIdempotencyKey(), Map.of("topic", kafkaTopic));
+            }
+        }
+    }
+
+    private void wakeDelivery(ContentPublishedEvent event, ContentEventOutbox outbox, String kafkaTopic) {
+        if (!deliveryClient.deliver(event)) {
+            log.warn("Notification worker wake did not complete for outbox {}; Kafka event remains SENT",
+                    outbox.getId());
+            operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                    "content.notification.wake_deferred", "PENDING", event.getSourceType(),
+                    event.getSourceId(), event.getSourceVersion(), event.getEventId(),
+                    event.getIdempotencyKey(), Map.of("topic", kafkaTopic));
+        }
     }
 
     private static String asString(Object value) {

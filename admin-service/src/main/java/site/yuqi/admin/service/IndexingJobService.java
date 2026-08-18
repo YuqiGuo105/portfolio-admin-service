@@ -15,7 +15,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -99,17 +98,9 @@ public class IndexingJobService {
     @Transactional
     public List<IndexingJob> claimReadyIndexingJobs(int batchSize, long leaseSeconds) {
         Instant now = Instant.now();
-        List<IndexingJob> jobs = repository.findByStatusInAndNextRetryAtLessThanEqualOrderByCreatedAtAsc(
-                Set.of(JobStatus.PENDING, JobStatus.FAILED, JobStatus.PROCESSING),
-                now,
-                PageRequest.of(0, Math.max(1, batchSize)));
         Instant leaseUntil = now.plusSeconds(Math.max(30, leaseSeconds));
-        jobs.forEach(job -> {
-            job.setStatus(JobStatus.PROCESSING);
-            job.setStartedAt(now);
-            job.setNextRetryAt(leaseUntil);
-        });
-        return jobs;
+        List<UUID> claimedIds = repository.claimReadyIds(now, leaseUntil, Math.max(1, batchSize));
+        return repository.findAllById(claimedIds);
     }
 
     @Transactional
@@ -133,6 +124,7 @@ public class IndexingJobService {
     @Transactional
     public void markIndexingJobDone(UUID jobId) {
         repository.findById(jobId).ifPresent(j -> {
+            if (j.getStatus() != JobStatus.PROCESSING) return;
             j.setStatus(JobStatus.DONE);
             j.setCompletedAt(Instant.now());
             j.setLastError(null);
@@ -142,6 +134,7 @@ public class IndexingJobService {
     @Transactional
     public void markIndexingJobFailed(UUID jobId, String error) {
         repository.findById(jobId).ifPresent(j -> {
+            if (j.getStatus() != JobStatus.PROCESSING) return;
             j.setStatus(JobStatus.FAILED);
             j.setRetryCount(j.getRetryCount() + 1);
             j.setLastError(error);

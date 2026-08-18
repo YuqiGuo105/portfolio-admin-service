@@ -112,6 +112,10 @@ portfolio:
     enabled: ${INDEXING_RELAY_ENABLED:true}
     interval-ms: ${INDEXING_RELAY_INTERVAL_MS:10000}
     initial-delay-ms: ${INDEXING_RELAY_INITIAL_DELAY_MS:15000}
+  relay:
+    executor:
+      threads: ${RELAY_EXECUTOR_THREADS:4}
+      queue-capacity: ${RELAY_EXECUTOR_QUEUE_CAPACITY:50}
 
 springdoc:
   api-docs:

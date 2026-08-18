@@ -34,6 +34,7 @@ public class IndexEventPublisher {
     private final IndexingJobService jobs;
     private final IndexerWakeClient wakeClient;
     private final OperationEventPublisher operations;
+    private final BoundedRelayExecutor relayExecutor;
 
     @Value("${portfolio.kafka.topics.search-index}")
     private String searchTopic;
@@ -67,31 +68,50 @@ public class IndexEventPublisher {
                 job.getId().toString(), job.getIdempotencyKey(),
                 java.util.Map.of("indexingJobId", job.getId().toString(), "topic", topic));
 
-        return kafkaTemplate.send(topic, partitionKey, event).whenCompleteAsync((result, ex) -> {
-            if (ex != null) {
-                jobs.markIndexingJobFailed(job.getId(), ex.getMessage());
-                operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
-                        "content." + job.getJobType().name().toLowerCase() + ".dispatch_failed",
-                        "FAILED", job.getSourceType(), job.getSourceIdText(), job.getSourceVersion(),
-                        event.getEventId(), job.getIdempotencyKey(),
-                        java.util.Map.of("errorType", ex.getClass().getSimpleName()));
-                log.error("Failed to publish {} event for {}:{}",
-                        job.getJobType(), job.getSourceType(), job.getSourceIdText(), ex);
-                return;
-            }
-            log.info("Published {} event to {} partition {} offset {}",
-                    job.getJobType(), topic,
-                    result.getRecordMetadata().partition(),
-                    result.getRecordMetadata().offset());
-            operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
-                    "content." + job.getJobType().name().toLowerCase() + ".published",
-                    "SUCCEEDED", job.getSourceType(), job.getSourceIdText(), job.getSourceVersion(),
-                    event.getEventId(), job.getIdempotencyKey(),
-                    java.util.Map.of("topic", topic, "partition", result.getRecordMetadata().partition(),
-                            "offset", result.getRecordMetadata().offset()));
-            if (!wakeClient.wakeAndAwait(job)) {
-                jobs.markIndexingJobFailed(job.getId(), "Indexer did not complete within wake lease");
+        return kafkaTemplate.send(topic, partitionKey, event).whenComplete((result, ex) -> {
+            if (!relayExecutor.tryExecute(() -> handlePublishResult(job, event, topic, result, ex))) {
+                log.warn("Index relay saturated job={} type={}; lease replay will recover it",
+                        job.getId(), job.getJobType());
             }
         });
+    }
+
+    private void handlePublishResult(IndexingJob job, ContentIndexEvent event, String topic,
+                                     org.springframework.kafka.support.SendResult<String, ContentIndexEvent> result,
+                                     Throwable ex) {
+        if (ex != null) {
+            jobs.markIndexingJobFailed(job.getId(), ex.getMessage());
+            operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                    "content." + job.getJobType().name().toLowerCase() + ".dispatch_failed",
+                    "FAILED", job.getSourceType(), job.getSourceIdText(), job.getSourceVersion(),
+                    event.getEventId(), job.getIdempotencyKey(),
+                    java.util.Map.of("errorType", ex.getClass().getSimpleName()));
+            log.error("Failed to publish {} event for {}:{}",
+                    job.getJobType(), job.getSourceType(), job.getSourceIdText(), ex);
+            return;
+        }
+        log.info("Published {} event to {} partition {} offset {}",
+                job.getJobType(), topic,
+                result.getRecordMetadata().partition(),
+                result.getRecordMetadata().offset());
+        operations.publishWithContext(event.getTraceId(), event.getCorrelationId(), "system",
+                "content." + job.getJobType().name().toLowerCase() + ".published",
+                "SUCCEEDED", job.getSourceType(), job.getSourceIdText(), job.getSourceVersion(),
+                event.getEventId(), job.getIdempotencyKey(),
+                java.util.Map.of("topic", topic, "partition", result.getRecordMetadata().partition(),
+                        "offset", result.getRecordMetadata().offset()));
+        if (!relayExecutor.tryExecute(() -> wakeIndexer(job))) {
+            log.warn("Indexer wake deferred job={} type={}; awaiting Kafka consumer or lease replay",
+                    job.getId(), job.getJobType());
+        }
+    }
+
+    private void wakeIndexer(IndexingJob job) {
+        if (!wakeClient.wakeAndAwait(job)) {
+            // The broker already accepted the event. Keep the job leased; the
+            // consumer may finish later, or the lease will expire and replay safely.
+            log.warn("Indexer wake deferred job={} type={}; awaiting Kafka consumer or lease replay",
+                    job.getId(), job.getJobType());
+        }
     }
 }

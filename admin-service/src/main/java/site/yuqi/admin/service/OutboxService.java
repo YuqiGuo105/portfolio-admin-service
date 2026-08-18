@@ -19,7 +19,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -100,6 +99,36 @@ public class OutboxService {
         return repository.findAllByOrderByCreatedAtDesc(page);
     }
 
+    @Transactional
+    public ContentEventOutbox retry(UUID eventId) {
+        ContentEventOutbox event = repository.findById(eventId)
+                .orElseThrow(() -> new IllegalArgumentException("Outbox event not found: " + eventId));
+        if (event.getStatus() != OutboxStatus.FAILED
+                && event.getStatus() != OutboxStatus.DLQ
+                && event.getStatus() != OutboxStatus.PROCESSING) {
+            throw new IllegalStateException("Only FAILED, DLQ, or leased PROCESSING outbox events can be retried (was "
+                    + event.getStatus() + ")");
+        }
+        event.setStatus(OutboxStatus.PENDING);
+        event.setNextRetryAt(Instant.now());
+        event.setLastError(null);
+        return event;
+    }
+
+    @Transactional
+    public ContentEventOutbox replay(UUID eventId) {
+        ContentEventOutbox event = repository.findById(eventId)
+                .orElseThrow(() -> new IllegalArgumentException("Outbox event not found: " + eventId));
+        if (event.getStatus() == OutboxStatus.PENDING || event.getStatus() == OutboxStatus.PROCESSING) {
+            throw new IllegalStateException("Outbox event is already pending or processing.");
+        }
+        event.setStatus(OutboxStatus.PENDING);
+        event.setSentAt(null);
+        event.setNextRetryAt(Instant.now());
+        event.setLastError(null);
+        return event;
+    }
+
     // ----- Worker-ready APIs (kept here so workers can reuse) ---------------
 
     @Transactional(readOnly = true)
@@ -113,17 +142,9 @@ public class OutboxService {
     @Transactional
     public List<ContentEventOutbox> claimReadyOutboxEvents(int batchSize, long leaseSeconds) {
         Instant now = Instant.now();
-        List<ContentEventOutbox> events = repository
-                .findByStatusInAndNextRetryAtLessThanEqualOrderByCreatedAtAsc(
-                        Set.of(OutboxStatus.PENDING, OutboxStatus.FAILED, OutboxStatus.PROCESSING),
-                        now,
-                        PageRequest.of(0, Math.max(1, batchSize)));
         Instant leaseUntil = now.plusSeconds(Math.max(10, leaseSeconds));
-        events.forEach(event -> {
-            event.setStatus(OutboxStatus.PROCESSING);
-            event.setNextRetryAt(leaseUntil);
-        });
-        return events;
+        List<UUID> claimedIds = repository.claimReadyIds(now, leaseUntil, Math.max(1, batchSize));
+        return repository.findAllById(claimedIds);
     }
 
     @Transactional
@@ -141,6 +162,7 @@ public class OutboxService {
     @Transactional
     public void markOutboxEventSent(UUID eventId) {
         repository.findById(eventId).ifPresent(e -> {
+            if (e.getStatus() != OutboxStatus.PROCESSING) return;
             e.setStatus(OutboxStatus.SENT);
             e.setSentAt(Instant.now());
             e.setLastError(null);
@@ -150,6 +172,7 @@ public class OutboxService {
     @Transactional
     public void markOutboxEventFailed(UUID eventId, String error) {
         repository.findById(eventId).ifPresent(e -> {
+            if (e.getStatus() != OutboxStatus.PROCESSING) return;
             int retryCount = e.getRetryCount() + 1;
             e.setStatus(retryCount >= 8 ? OutboxStatus.DLQ : OutboxStatus.FAILED);
             e.setRetryCount(retryCount);
