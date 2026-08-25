@@ -169,8 +169,8 @@ three `content.notification.*.v1` topics is tracked in that repo.)
 
 | Channel | Header | Used by | Status |
 |---------|--------|---------|--------|
-| **Primary (browser)** | `Authorization: Bearer <Supabase JWT>` | Portfolio admin panel (`/admin/*` pages) and Mr. Pot chat widget. Sign in at <https://www.yuqi.site> → the JWT is `(await supabase.auth.getSession()).data.session.access_token`. Email must be in `ADMIN_ALLOWED_EMAILS`. | Preferred |
-| **Fallback (server-to-server)** | `X-Admin-Secret: <secret>` | Internal scripts, CI smoke tests, server-side jobs. Value must equal the `ADMIN_SECRET` env var. | Use only when a JWT is not available |
+| **Primary (browser)** | `Authorization: Bearer <Supabase JWT>` | Portfolio admin panel (`/admin/*` pages) and Mr. Pot chat widget. The email must resolve to an active `admin_users` row or a configured owner. | Preferred |
+| **Fallback (server-to-server)** | `X-Admin-Secret: <secret>` | Internal scripts, CI smoke tests, server-side jobs. It cannot manage administrator identities. | Break-glass automation only |
 
 Error responses use the structured `ApiError` shape so the frontend can react:
 
@@ -178,7 +178,16 @@ Error responses use the structured `ApiError` shape so the frontend can react:
 |--------|--------------|---------|
 | 401    | `missing_credentials` | Neither header supplied → UI should redirect to the Portfolio Supabase login. |
 | 401    | `invalid_token`       | Bearer JWT failed signature/expiry, or `X-Admin-Secret` mismatched → UI should clear the session and re-prompt. |
-| 403    | `forbidden_email`     | JWT was valid but email is not in `ADMIN_ALLOWED_EMAILS` → UI should show "your account is not authorised". |
+| 403    | `forbidden_email`     | JWT was valid but the account is not an active administrator. |
+| 403    | `forbidden_role`      | Administrator is authenticated but lacks the required role or owner capability. |
+
+Admin authorization is fail-closed and uses `EDITOR < PUBLISHER < ADMIN`.
+There is no read-only login role: a valid Supabase user without an active
+administrator record is denied and signed out by the admin UI.
+Only identities configured in `ADMIN_OWNER_EMAILS` can list, create, update, or
+suspend administrators. Owners are deployment policy rather than mutable rows,
+so the UI cannot demote or suspend the recovery account. `ADMIN_ALLOWED_EMAILS`
+is retained only as a break-glass fallback and should normally be empty.
 
 **Swagger UI** at `/swagger-ui.html` is whitelisted (no filter) so humans can
 log in there: click **Authorize**, pick `BearerAuth`, paste `Bearer <token>`.
@@ -264,7 +273,8 @@ All three services share these env vars (set via Cloud Run `--set-env-vars` /
 |---------------------------|----------------------------------------------------------------------|
 | `ADMIN_SECRET`            | Single-value bearer for the admin header path                        |
 | `SUPABASE_JWT_SECRET`     | Supabase project JWT secret                                          |
-| `ADMIN_ALLOWED_EMAILS`    | Comma-separated allow-list for the Supabase JWT path                 |
+| `ADMIN_OWNER_EMAILS`      | Deployment-owned identities allowed to manage administrators         |
+| `ADMIN_ALLOWED_EMAILS`    | Optional break-glass allow-list; normal access uses `admin_users`    |
 | `ALLOWED_ORIGINS`         | CORS origins                                                         |
 | `OPENSEARCH_WORKER_ENABLED` | `false` in prod (search work lives in `search-indexer`)            |
 | `KAFKA_TOPIC_*`           | Override topic names (see `application.yml` defaults)                |

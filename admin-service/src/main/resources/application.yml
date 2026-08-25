@@ -87,6 +87,9 @@ portfolio:
       enabled: ${OPENSEARCH_WORKER_ENABLED:false}    # disabled by default; use portfolio-search-indexer service
   admin:
     secret: ${ADMIN_SECRET:}
+    # Owner identities are deployment policy and cannot be edited through the
+    # admin UI. Override ADMIN_OWNER_EMAILS for another environment.
+    owner-emails: ${ADMIN_OWNER_EMAILS:yuqi.guo17@gmail.com}
     allowed-origins: ${ALLOWED_ORIGINS:http://localhost:3000}
   supabase:
     jwt-secret: ${SUPABASE_JWT_SECRET:}
