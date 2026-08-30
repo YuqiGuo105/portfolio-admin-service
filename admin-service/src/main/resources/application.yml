@@ -94,6 +94,13 @@ portfolio:
   supabase:
     jwt-secret: ${SUPABASE_JWT_SECRET:}
     allowed-emails: ${ADMIN_ALLOWED_EMAILS:}
+    url: ${SUPABASE_URL:}
+    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+  media:
+    cover-bucket: ${CONTENT_COVER_BUCKET:project-covers}
+    max-cover-bytes: ${CONTENT_COVER_MAX_BYTES:5242880}
+    download-timeout-seconds: ${CONTENT_COVER_DOWNLOAD_TIMEOUT_SECONDS:10}
+    allowed-source-hosts: ${CONTENT_COVER_ALLOWED_SOURCE_HOSTS:}
   kafka:
     topics:
       search-index: ${KAFKA_TOPIC_SEARCH_INDEX:content.search.index.v1}

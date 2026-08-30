@@ -20,6 +20,8 @@ import site.yuqi.admin.domain.IndexingJob;
 import site.yuqi.admin.domain.JobType;
 import site.yuqi.admin.domain.SourceType;
 import site.yuqi.admin.dto.ContentDetailDto;
+import site.yuqi.admin.dto.ContentCoverUploadRequest;
+import site.yuqi.admin.dto.ContentCoverUploadResponse;
 import site.yuqi.admin.dto.ContentListItemDto;
 import site.yuqi.admin.dto.ContentMutationRequest;
 import site.yuqi.admin.dto.PublishRequest;
@@ -30,6 +32,7 @@ import site.yuqi.admin.service.AuditLogService;
 import site.yuqi.admin.service.ContentService;
 import site.yuqi.admin.service.IndexingJobService;
 import site.yuqi.admin.service.VersionService;
+import site.yuqi.admin.media.ContentCoverService;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -47,6 +50,7 @@ public class ContentAdminController {
     private final IndexingJobService indexingJobService;
     private final AuditLogService auditLogService;
     private final ContentVersionRepository versionRepository;
+    private final ContentCoverService contentCoverService;
 
     @GetMapping
     @Operation(summary = "List content across one or all sources",
@@ -135,6 +139,21 @@ public class ContentAdminController {
         NormalizedContent updated = contentService.update(type, sourceId, data, publish,
                 AdminPrincipal.from(req), changeNote);
         return ResponseEntity.ok(updated);
+    }
+
+    @PostMapping("/{sourceType}/{sourceId}/cover")
+    @Operation(summary = "Upload and attach an immutable content cover",
+            description = "Accepts a public HTTPS source URL or bounded base64 image, validates PNG/JPEG/WebP, "
+                    + "stores it in Supabase Storage and updates the content image URL. Requires admin authentication.")
+    public ResponseEntity<ContentCoverUploadResponse> uploadCover(
+            @PathVariable String sourceType,
+            @PathVariable String sourceId,
+            @RequestBody ContentCoverUploadRequest body,
+            HttpServletRequest req) {
+        SourceType type = SourceType.parse(sourceType)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown sourceType: " + sourceType));
+        return ResponseEntity.ok(contentCoverService.upload(
+                type, sourceId, body, AdminPrincipal.from(req)));
     }
 
     @PostMapping("/{sourceType}/{sourceId}/publish")
