@@ -55,6 +55,7 @@ public class NotificationEventPublisher {
     public CompletableFuture<?> publish(ContentEventOutbox outbox, NormalizedContent content,
                         int version, Topic notificationTopic) {
         OperationContext context = OperationContext.current();
+        Map<String, Object> payload = outbox.getPayload() == null ? Map.of() : outbox.getPayload();
         outboxService.markOutboxEventProcessing(outbox.getId(), 60);
         String idempotencyKey = OutboxService.idempotencyKey(
                 OutboxEventType.CONTENT_PUBLISHED,
@@ -79,6 +80,8 @@ public class NotificationEventPublisher {
                 .imageUrl(content.getImageUrl())
                 .category(content.getCategory())
                 .tags(content.getTags())
+                .notifySubscribers(!Boolean.FALSE.equals(payload.get("notifySubscribers")))
+                .audience(asString(payload.get("audience")))
                 .idempotencyKey(idempotencyKey)
                 .build();
 
@@ -87,7 +90,7 @@ public class NotificationEventPublisher {
     }
 
     public CompletableFuture<?> publish(ContentEventOutbox outbox) {
-        Map<String, Object> payload = outbox.getPayload();
+        Map<String, Object> payload = outbox.getPayload() == null ? Map.of() : outbox.getPayload();
         Map<String, Object> metadata = asMap(payload.get("metadata"));
         Topic notificationTopic = Topic.valueOf(outbox.getTopic());
         String sourceType = outbox.getSourceType();
@@ -110,6 +113,8 @@ public class NotificationEventPublisher {
                 .imageUrl(asString(payload.get("imageUrl")))
                 .category(asString(metadata.get("category")))
                 .tags(asStringList(metadata.get("tags")))
+                .notifySubscribers(!Boolean.FALSE.equals(payload.get("notifySubscribers")))
+                .audience(asString(payload.get("audience")))
                 .idempotencyKey(outbox.getIdempotencyKey())
                 .build();
 

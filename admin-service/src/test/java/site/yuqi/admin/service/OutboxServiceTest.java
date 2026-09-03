@@ -8,6 +8,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import site.yuqi.admin.domain.ContentEventOutbox;
 import site.yuqi.admin.domain.OutboxEventType;
 import site.yuqi.admin.domain.OutboxStatus;
+import site.yuqi.admin.domain.SourceType;
+import site.yuqi.admin.domain.Topic;
+import site.yuqi.admin.adapter.NormalizedContent;
 import site.yuqi.admin.repo.ContentEventOutboxRepository;
 
 import java.time.Instant;
@@ -100,6 +103,27 @@ class OutboxServiceTest {
 
         verify(repository).claimReadyIds(any(Instant.class), any(Instant.class), eq(2));
         verify(repository).findAllById(ids);
+    }
+
+    @Test
+    void silentPublishPersistsAudienceControlsInOutboxPayload() {
+        NormalizedContent content = NormalizedContent.builder()
+                .sourceType(SourceType.BLOG)
+                .sourceId("article-1")
+                .title("Corrected title")
+                .summary("Typo-only update")
+                .url("https://www.yuqi.site/blog-single/article-1")
+                .build();
+        when(repository.findByIdempotencyKey(any())).thenReturn(Optional.empty());
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ContentEventOutbox event = service.enqueuePublish(
+                content, 3, Topic.ARTICLE_UPDATES, NotificationAudience.NONE);
+
+        assertThat(event.getPayload())
+                .containsEntry("notifySubscribers", false)
+                .containsEntry("audience", "NONE");
+        assertThat(event.getStatus()).isEqualTo(OutboxStatus.PENDING);
     }
 
     private static ContentEventOutbox event(UUID id, OutboxStatus status) {

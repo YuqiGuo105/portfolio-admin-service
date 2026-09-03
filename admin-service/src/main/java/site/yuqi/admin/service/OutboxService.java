@@ -38,10 +38,15 @@ public class OutboxService {
         return eventType.name() + ":" + sourceType.name() + ":" + sourceIdText + ":v" + version;
     }
 
+    public ContentEventOutbox enqueuePublish(NormalizedContent content, int version, Topic topic) {
+        return enqueuePublish(content, version, topic, NotificationAudience.ALL_SUBSCRIBERS);
+    }
+
     @Transactional
     public ContentEventOutbox enqueuePublish(NormalizedContent content,
                                              int version,
-                                             Topic topic) {
+                                             Topic topic,
+                                             NotificationAudience audience) {
         String key = idempotencyKey(OutboxEventType.CONTENT_PUBLISHED,
                 content.getSourceType(), content.getSourceId(), version);
 
@@ -61,6 +66,8 @@ public class OutboxService {
             payload.put("imageUrl", content.getImageUrl());
             payload.put("createdAt", Instant.now().toString());
             payload.put("idempotencyKey", key);
+            payload.put("notifySubscribers", audience != NotificationAudience.NONE);
+            payload.put("audience", audience.name());
             payload.put("traceId", context.traceId());
             payload.put("correlationId", context.correlationId());
             payload.put("causationId", id.toString());

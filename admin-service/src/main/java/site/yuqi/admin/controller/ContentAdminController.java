@@ -26,12 +26,14 @@ import site.yuqi.admin.dto.ContentListItemDto;
 import site.yuqi.admin.dto.ContentMutationRequest;
 import site.yuqi.admin.dto.PublishRequest;
 import site.yuqi.admin.dto.PublishResponseDto;
+import site.yuqi.admin.dto.RollbackRequest;
 import site.yuqi.admin.repo.ContentVersionRepository;
 import site.yuqi.admin.security.AdminPrincipal;
 import site.yuqi.admin.service.AuditLogService;
 import site.yuqi.admin.service.ContentService;
 import site.yuqi.admin.service.IndexingJobService;
 import site.yuqi.admin.service.VersionService;
+import site.yuqi.admin.service.NotificationAudience;
 import site.yuqi.admin.media.ContentCoverService;
 
 import java.util.ArrayList;
@@ -165,8 +167,41 @@ public class ContentAdminController {
         SourceType type = SourceType.parse(sourceType)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown sourceType: " + sourceType));
         String changeNote = body == null ? null : body.getChangeNote();
+        NotificationAudience audience = NotificationAudience.resolve(
+                body == null ? null : body.getNotifySubscribers(), body == null ? null : body.getAudience());
         return ResponseEntity.ok(PublishResponseDto.from(
-                contentService.publish(type, sourceId, AdminPrincipal.from(req), changeNote)));
+                contentService.publish(type, sourceId, AdminPrincipal.from(req), changeNote, audience)));
+    }
+
+    @GetMapping("/{sourceType}/{sourceId}/versions")
+    public ResponseEntity<Map<String, Object>> listVersions(
+            @PathVariable String sourceType, @PathVariable String sourceId,
+            @RequestParam(value = "limit", defaultValue = "20") int limit) {
+        SourceType type = SourceType.parse(sourceType)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown sourceType: " + sourceType));
+        return ResponseEntity.ok(Map.of("items",
+                versionService.listVersions(type.name(), sourceId, limit)));
+    }
+
+    @GetMapping("/{sourceType}/{sourceId}/versions/diff")
+    public ResponseEntity<Map<String, Object>> diffVersions(
+            @PathVariable String sourceType, @PathVariable String sourceId,
+            @RequestParam int fromVersion, @RequestParam int toVersion) {
+        SourceType type = SourceType.parse(sourceType)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown sourceType: " + sourceType));
+        return ResponseEntity.ok(versionService.diff(type.name(), sourceId, fromVersion, toVersion));
+    }
+
+    @PostMapping("/{sourceType}/{sourceId}/rollback")
+    public ResponseEntity<PublishResponseDto> rollback(
+            @PathVariable String sourceType, @PathVariable String sourceId,
+            @RequestBody RollbackRequest body, HttpServletRequest req) {
+        SourceType type = SourceType.parse(sourceType)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown sourceType: " + sourceType));
+        if (body == null || body.getVersion() < 1) throw new IllegalArgumentException("version must be positive");
+        NotificationAudience audience = NotificationAudience.resolve(body.getNotifySubscribers(), body.getAudience());
+        return ResponseEntity.ok(PublishResponseDto.from(contentService.rollback(type, sourceId, body.getVersion(),
+                AdminPrincipal.from(req), body.getChangeNote(), audience)));
     }
 
     @PostMapping("/{sourceType}/{sourceId}/reindex-rag")

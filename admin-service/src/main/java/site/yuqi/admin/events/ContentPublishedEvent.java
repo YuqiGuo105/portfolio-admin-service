@@ -74,6 +74,11 @@ public class ContentPublishedEvent {
     /** Tags list, e.g. ["Java","Spring Boot"]. */
     private List<String> tags;
 
+    private boolean notifySubscribers;
+
+    /** ALL_SUBSCRIBERS, ADMINS_ONLY, or NONE. */
+    private String audience;
+
     /**
      * Outbox idempotency key so the notification service can
      * deduplicate re-deliveries: {@code CONTENT_PUBLISHED:<TYPE>:<id>:v<n>}

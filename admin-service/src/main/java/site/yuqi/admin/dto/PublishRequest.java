@@ -9,4 +9,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class PublishRequest {
     private String changeNote;
+    private Boolean notifySubscribers;
+    private String audience;
 }

@@ -66,11 +66,36 @@ public class VersionService {
 
     @Transactional(readOnly = true)
     public List<ContentVersion> listVersions(String sourceType, String sourceIdText, int limit) {
-        // Repository helper covers "latest"; for full list we use the index
-        // (sourceType, sourceIdText, version DESC).
-        return repository.findAll(PageRequest.of(0, Math.max(1, Math.min(limit, 200))))
-                .stream()
-                .filter(v -> v.getSourceType().equals(sourceType) && v.getSourceIdText().equals(sourceIdText))
-                .toList();
+        return repository.findBySourceTypeAndSourceIdTextOrderByVersionDesc(
+                sourceType, sourceIdText, PageRequest.of(0, Math.max(1, Math.min(limit, 200))));
+    }
+
+    @Transactional(readOnly = true)
+    public ContentVersion getVersion(String sourceType, String sourceIdText, int version) {
+        return repository.findBySourceTypeAndSourceIdTextAndVersion(sourceType, sourceIdText, version)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Version not found: " + sourceType + ":" + sourceIdText + ":v" + version));
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> diff(String sourceType, String sourceIdText, int fromVersion, int toVersion) {
+        ContentVersion from = getVersion(sourceType, sourceIdText, fromVersion);
+        ContentVersion to = getVersion(sourceType, sourceIdText, toVersion);
+        Map<String, Object> before = from.getSnapshot() == null ? Map.of() : from.getSnapshot();
+        Map<String, Object> after = to.getSnapshot() == null ? Map.of() : to.getSnapshot();
+        Map<String, Object> changed = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashSet<String> keys = new java.util.LinkedHashSet<>(before.keySet());
+        keys.addAll(after.keySet());
+        for (String key : keys) {
+            Object oldValue = before.get(key);
+            Object newValue = after.get(key);
+            if (!java.util.Objects.deepEquals(oldValue, newValue)) {
+                changed.put(key, Map.of("before", oldValue == null ? "" : oldValue,
+                        "after", newValue == null ? "" : newValue));
+            }
+        }
+        return Map.of("sourceType", sourceType, "sourceId", sourceIdText,
+                "fromVersion", fromVersion, "toVersion", toVersion,
+                "changedFieldCount", changed.size(), "changes", changed);
     }
 }

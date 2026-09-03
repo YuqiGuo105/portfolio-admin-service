@@ -4,6 +4,7 @@ public enum AuditAction {
     CREATE,
     UPDATE,
     PUBLISH,
+    ROLLBACK,
     ARCHIVE,
     DELETE,
     REINDEX_RAG,

@@ -89,7 +89,8 @@ public class ContentService {
                 v1.getVersion(), null, adapter.toSnapshot(created));
 
         if (publish) {
-            publishInternal(adapter, created, actor, changeNote, /*reusedVersion*/ v1);
+            publishInternal(adapter, created, actor, changeNote, /*reusedVersion*/ v1,
+                    NotificationAudience.ALL_SUBSCRIBERS);
         }
         return created;
     }
@@ -112,16 +113,43 @@ public class ContentService {
                 beforeSnap, adapter.toSnapshot(after));
 
         if (publish) {
-            publishInternal(adapter, after, actor, changeNote, null);
+            publishInternal(adapter, after, actor, changeNote, null,
+                    NotificationAudience.ALL_SUBSCRIBERS);
         }
         return after;
     }
 
     @Transactional
     public PublishResult publish(SourceType type, String sourceId, String actor, String changeNote) {
+        return publish(type, sourceId, actor, changeNote, NotificationAudience.ALL_SUBSCRIBERS);
+    }
+
+    @Transactional
+    public PublishResult publish(SourceType type, String sourceId, String actor, String changeNote,
+                                 NotificationAudience audience) {
         ContentAdapter adapter = adapters.get(type);
         NormalizedContent content = adapter.markPublished(sourceId);
-        return publishInternal(adapter, content, actor, changeNote, null);
+        return publishInternal(adapter, content, actor, changeNote, null, audience);
+    }
+
+    @Transactional
+    public PublishResult rollback(SourceType type, String sourceId, int targetVersion,
+                                  String actor, String changeNote, NotificationAudience audience) {
+        ContentAdapter adapter = adapters.get(type);
+        NormalizedContent before = getOrThrow(type, sourceId);
+        ContentVersion target = versionService.getVersion(type.name(), sourceId, targetVersion);
+        if (target.getSnapshot() == null || target.getSnapshot().isEmpty()) {
+            throw new IllegalStateException("Version v" + targetVersion + " has no restorable snapshot");
+        }
+        NormalizedContent restored = adapter.update(sourceId, new java.util.LinkedHashMap<>(target.getSnapshot()));
+        restored = adapter.markPublished(sourceId);
+        int newVersion = versionService.nextVersionFor(type.name(), sourceId);
+        String note = changeNote == null || changeNote.isBlank() ? "Rollback to v" + targetVersion : changeNote;
+        ContentVersion snapshot = versionService.snapshot(
+                restored, newVersion, actor, note, adapter.toSnapshot(restored));
+        auditLogService.log(actor, AuditAction.ROLLBACK, type, sourceId, newVersion,
+                adapter.toSnapshot(before), adapter.toSnapshot(restored));
+        return publishInternal(adapter, restored, actor, note, snapshot, audience);
     }
 
     // ----- Reindex shortcuts ----------------------------------------------
@@ -149,7 +177,8 @@ public class ContentService {
 
     private PublishResult publishInternal(ContentAdapter adapter, NormalizedContent content,
                                           String actor, String changeNote,
-                                          ContentVersion existingVersionForCreate) {
+                                          ContentVersion existingVersionForCreate,
+                                          NotificationAudience audience) {
         SourceType type = content.getSourceType();
         String sourceId = content.getSourceId();
 
@@ -162,7 +191,7 @@ public class ContentService {
         }
 
         Topic topic = TopicMapping.topicFor(type);
-        ContentEventOutbox outbox = outboxService.enqueuePublish(content, version.getVersion(), topic);
+        ContentEventOutbox outbox = outboxService.enqueuePublish(content, version.getVersion(), topic, audience);
 
         IndexingJob ragJob = indexingJobService.enqueue(
                 JobType.RAG_INDEX, type, sourceId, version.getVersion(),

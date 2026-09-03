@@ -186,7 +186,7 @@ class ContentPublishNotificationE2ETest {
                 .thenReturn(version);
 
         // Outbox mock
-        when(outboxService.enqueuePublish(any(), anyInt(), any()))
+        when(outboxService.enqueuePublish(any(), anyInt(), any(), any()))
                 .thenReturn(site.yuqi.admin.domain.ContentEventOutbox.builder()
                         .id(UUID.randomUUID())
                         .sourceType("BLOG")

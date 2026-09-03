@@ -17,7 +17,18 @@ public final class AdminPrincipal {
 
     public static String from(HttpServletRequest req) {
         Object v = req.getAttribute(ATTR);
-        return v == null ? "admin" : String.valueOf(v);
+        StringBuilder actor = new StringBuilder(v == null ? "admin" : String.valueOf(v));
+        append(actor, "tool", req.getHeader("X-MCP-Tool"));
+        append(actor, "client", req.getHeader("X-MCP-Client"));
+        append(actor, "model", req.getHeader("X-MCP-Model"));
+        append(actor, "requestedBy", req.getHeader("X-MCP-Actor"));
+        return actor.length() > 500 ? actor.substring(0, 500) : actor.toString();
+    }
+
+    private static void append(StringBuilder actor, String key, String raw) {
+        if (raw == null || raw.isBlank()) return;
+        String safe = raw.replaceAll("[^A-Za-z0-9@._:/ -]", "");
+        if (!safe.isBlank()) actor.append('|').append(key).append('=').append(safe, 0, Math.min(100, safe.length()));
     }
 
     public static String roleFrom(HttpServletRequest req) {
