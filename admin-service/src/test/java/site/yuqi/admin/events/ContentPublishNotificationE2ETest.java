@@ -90,6 +90,7 @@ import static org.mockito.Mockito.when;
         "portfolio.opensearch.worker.enabled=false",
         "portfolio.operations.projection.enabled=false",
         "portfolio.outbox.worker.enabled=false",
+        "portfolio.admin.owner-emails=owner@example.com",
         // Notification topics
         "portfolio.kafka.topics.notification.article-updates=content.notification.article-updates.v1",
         "portfolio.kafka.topics.notification.feature-updates=content.notification.feature-updates.v1",

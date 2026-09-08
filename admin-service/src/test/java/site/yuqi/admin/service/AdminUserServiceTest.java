@@ -98,6 +98,13 @@ class AdminUserServiceTest {
     }
 
     @Test
+    void startupRejectsMissingOwnerConfiguration() {
+        assertThatThrownBy(() -> new AdminUserService(repository, "  ,  "))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("ADMIN_OWNER_EMAILS");
+    }
+
+    @Test
     void configuredOwnerCannotBeDemotedOrSuspended() {
         assertThatThrownBy(() -> service.upsert(
                 "owner@example.com", "EDITOR", "ACTIVE", null, null, "owner@example.com"))

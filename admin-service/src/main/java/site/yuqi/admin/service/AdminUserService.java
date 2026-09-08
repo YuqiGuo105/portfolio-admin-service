@@ -25,7 +25,7 @@ public class AdminUserService {
 
     public AdminUserService(
             AdminUserRepository repository,
-            @Value("${portfolio.admin.owner-emails:}") String ownerEmailsCsv
+            @Value("${portfolio.admin.owner-emails}") String ownerEmailsCsv
     ) {
         this.repository = repository;
         this.ownerEmails = ownerEmailsCsv == null || ownerEmailsCsv.isBlank()
@@ -35,6 +35,10 @@ public class AdminUserService {
                     .filter(value -> !value.isBlank())
                     .distinct()
                     .toList();
+        if (this.ownerEmails.isEmpty()) {
+            throw new IllegalStateException(
+                    "ADMIN_OWNER_EMAILS must contain at least one valid owner identity.");
+        }
     }
 
     @Transactional

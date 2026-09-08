@@ -184,7 +184,8 @@ Error responses use the structured `ApiError` shape so the frontend can react:
 Admin authorization is fail-closed and uses `EDITOR < PUBLISHER < ADMIN`.
 There is no read-only login role: a valid Supabase user without an active
 administrator record is denied and signed out by the admin UI.
-Only identities configured in `ADMIN_OWNER_EMAILS` can list, create, update, or
+Only identities configured in the required `ADMIN_OWNER_EMAILS` environment
+variable can list, create, update, or
 suspend administrators. Owners are deployment policy rather than mutable rows,
 so the UI cannot demote or suspend the recovery account. `ADMIN_ALLOWED_EMAILS`
 is retained only as a break-glass fallback and should normally be empty.
@@ -273,7 +274,7 @@ All three services share these env vars (set via Cloud Run `--set-env-vars` /
 |---------------------------|----------------------------------------------------------------------|
 | `ADMIN_SECRET`            | Single-value bearer for the admin header path                        |
 | `SUPABASE_JWT_SECRET`     | Supabase project JWT secret                                          |
-| `ADMIN_OWNER_EMAILS`      | Deployment-owned identities allowed to manage administrators         |
+| `ADMIN_OWNER_EMAILS`      | Required comma-separated deployment-owned identities; no code default |
 | `ADMIN_ALLOWED_EMAILS`    | Optional break-glass allow-list; normal access uses `admin_users`    |
 | `ALLOWED_ORIGINS`         | CORS origins                                                         |
 | `OPENSEARCH_WORKER_ENABLED` | `false` in prod (search work lives in `search-indexer`)            |
@@ -351,6 +352,7 @@ Each service has its own workflow under `.github/workflows/`. They are
 | `WIF_PROVIDER`            | `projects/702193211434/locations/global/workloadIdentityPools/github-pool/providers/github-provider`     |
 | `DEPLOYER_SA_EMAIL`       | `ci-deployer@portfolio-notify-prod.iam.gserviceaccount.com`                                              |
 | `ADMIN_RUNTIME_SA_EMAIL`  | `admin-platform-runtime@portfolio-notify-prod.iam.gserviceaccount.com`                                   |
+| `ADMIN_OWNER_EMAILS`      | Comma-separated Root Owner identities; configure per environment and never commit production values     |
 | `ALLOWED_ORIGINS`         | `https://www.yuqi.site,http://localhost:3000`                                                            |
 | `PORTFOLIO_BASE_URL`      | `https://www.yuqi.site`                                                                                  |
 
