@@ -17,6 +17,9 @@ import site.yuqi.ragindexer.events.ContentIndexEvent;
 import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.Map;
+import org.springframework.jdbc.core.JdbcTemplate;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
 
 @Configuration
 @EnableKafka
@@ -42,14 +45,27 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, ContentIndexEvent>
-            kafkaListenerContainerFactory(ConsumerFactory<String, ContentIndexEvent> cf) {
+            kafkaListenerContainerFactory(ConsumerFactory<String, ContentIndexEvent> cf, JdbcTemplate jdbc, ObjectMapper mapper) {
         ConcurrentKafkaListenerContainerFactory<String, ContentIndexEvent> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(cf);
         factory.setConcurrency(concurrency);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
-        factory.setCommonErrorHandler(new DefaultErrorHandler(
-                new FixedBackOff(5000L, FixedBackOff.UNLIMITED_ATTEMPTS)));
+        ExponentialBackOffWithMaxRetries backoff = new ExponentialBackOffWithMaxRetries(4);
+        backoff.setInitialInterval(1000); backoff.setMultiplier(2); backoff.setMaxInterval(10000);
+        DefaultErrorHandler handler = new DefaultErrorHandler((record,error) -> {
+            try {
+                String payload = mapper.writeValueAsString(record.value());
+                jdbc.update("""
+                        insert into indexing_kafka_quarantine(worker,topic,partition_id,record_offset,payload,error_type)
+                        values (?,?,?,?,?,?) on conflict do nothing
+                        ""","RAG",record.topic(),record.partition(),record.offset(),payload,error.getClass().getSimpleName());
+            } catch(Exception failedQuarantine) {
+                throw new IllegalStateException("Quarantine failed; source offset must not be committed",failedQuarantine);
+            }
+        },backoff);
+        handler.setCommitRecovered(true);
+        factory.setCommonErrorHandler(handler);
         return factory;
     }
 }

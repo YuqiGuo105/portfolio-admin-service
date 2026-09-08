@@ -71,6 +71,10 @@ public class RagIndexConsumer {
                 evt.getSourceVersion(), jobId);
 
         try {
+            if ("DLQ".equals(jobs.status(jobId))) {
+                ack.acknowledge();
+                return;
+            }
             if (jobs.isDone(jobId)) {
                 log.info("RAG_INDEX job {} already DONE; acknowledging replay", jobId);
                 ack.acknowledge();

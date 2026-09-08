@@ -76,13 +76,13 @@ public class IndexingJobService {
     public IndexingJob retry(UUID jobId) {
         IndexingJob job = repository.findById(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("Indexing job not found: " + jobId));
-        if (job.getStatus() != JobStatus.FAILED && job.getStatus() != JobStatus.SKIPPED) {
+        if (job.getStatus() != JobStatus.FAILED && job.getStatus() != JobStatus.SKIPPED && job.getStatus() != JobStatus.DLQ) {
             throw new IllegalStateException("Only FAILED or SKIPPED jobs can be retried (was " + job.getStatus() + ")");
         }
         job.setStatus(JobStatus.PENDING);
         job.setNextRetryAt(Instant.now());
         job.setLastError(null);
-        job.setRetryCount(job.getRetryCount() + 1);
+        job.setRetryCount(0);
         return job;
     }
 
@@ -135,7 +135,7 @@ public class IndexingJobService {
     public void markIndexingJobFailed(UUID jobId, String error) {
         repository.findById(jobId).ifPresent(j -> {
             if (j.getStatus() != JobStatus.PROCESSING) return;
-            j.setStatus(JobStatus.FAILED);
+            j.setStatus(j.getRetryCount() + 1 >= 8 ? JobStatus.DLQ : JobStatus.FAILED);
             j.setRetryCount(j.getRetryCount() + 1);
             j.setLastError(error);
             j.setNextRetryAt(Instant.now().plusSeconds(60L * (1L << Math.min(j.getRetryCount(), 6))));

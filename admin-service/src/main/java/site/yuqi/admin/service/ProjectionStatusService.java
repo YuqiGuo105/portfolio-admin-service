@@ -54,6 +54,8 @@ public class ProjectionStatusService {
                 && rag.get().getStatus() == JobStatus.DONE
                 && notification.get().getStatus() == OutboxStatus.SENT) return "READY";
         if (search.get().getStatus() == JobStatus.FAILED
+                || search.get().getStatus() == JobStatus.DLQ
+                || rag.get().getStatus() == JobStatus.DLQ
                 || rag.get().getStatus() == JobStatus.FAILED
                 || notification.get().getStatus() == OutboxStatus.FAILED
                 || notification.get().getStatus() == OutboxStatus.DLQ) return "DEGRADED";

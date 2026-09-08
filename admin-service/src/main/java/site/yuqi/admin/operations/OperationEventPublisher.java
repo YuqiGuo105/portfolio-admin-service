@@ -15,6 +15,7 @@ import java.util.UUID;
 public class OperationEventPublisher {
 
     private final OperationTimelineProjector projector;
+    private final OperationEventJournal journal;
 
     @Value("${spring.application.name:portfolio-admin-service}")
     private String service;
@@ -50,8 +51,11 @@ public class OperationEventPublisher {
     }
 
     private void projectFailOpen(OperationEvent event) {
+        journal.append(event);
+        // Existing request-scoped workers drain the journal after commit.
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) return;
         try {
-            projector.project(event);
+            journal.drain();
         } catch (Exception error) {
             log.warn("Operation event projection failed type={} eventId={}: {}",
                     event.eventType(), event.eventId(), error.getMessage());

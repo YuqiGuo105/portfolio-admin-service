@@ -5,5 +5,6 @@ public enum JobStatus {
     PROCESSING,
     DONE,
     FAILED,
-    SKIPPED
+    SKIPPED,
+    DLQ
 }

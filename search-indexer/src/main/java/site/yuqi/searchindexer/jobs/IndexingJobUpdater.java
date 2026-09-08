@@ -73,7 +73,7 @@ public class IndexingJobUpdater {
         String truncated = error == null ? null : error.substring(0, Math.min(error.length(), 1000));
         jdbc.update("""
                 UPDATE public.indexing_jobs
-                   SET status = 'FAILED',
+                   SET status = CASE WHEN retry_count + 1 >= 8 THEN 'DLQ' ELSE 'FAILED' END,
                        retry_count = retry_count + 1,
                        last_error = ?,
                        updated_at = ?,

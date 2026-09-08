@@ -67,6 +67,10 @@ public class SearchIndexConsumer {
                 evt.getEventId(), evt.getSourceType(), evt.getSourceId(), jobId);
 
         try {
+            if ("DLQ".equals(jobs.status(jobId))) {
+                ack.acknowledge();
+                return;
+            }
             if (jobs.isDone(jobId)) {
                 log.info("SEARCH_INDEX job {} already DONE; acknowledging replay", jobId);
                 ack.acknowledge();

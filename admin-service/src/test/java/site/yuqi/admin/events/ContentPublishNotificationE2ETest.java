@@ -100,6 +100,8 @@ import static org.mockito.Mockito.when;
 })
 @DirtiesContext
 class ContentPublishNotificationE2ETest {
+    @MockBean
+    private site.yuqi.admin.operations.OperationEventJournal operationJournal;
 
     // ── Topics under test ────────────────────────────────────────────────────
     private static final String ARTICLE_TOPIC    = "content.notification.article-updates.v1";
