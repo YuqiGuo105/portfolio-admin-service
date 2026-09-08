@@ -126,6 +126,25 @@ Alerts can notify via: Email, Slack, Discord, PagerDuty (all free).
 | analytics-aggregator-service | 8093 | portfolio-analytics-platform/analytics-aggregator-service | /actuator/prometheus |
 | analytics-alerts-service | 8094 | portfolio-analytics-platform/analytics-alerts-service | /actuator/prometheus |
 
+## Career Workflow Service
+
+`portfolio-application-copilot` exposes JVM and HTTP metrics at `/actuator/prometheus`.
+The Alloy `portfolio_career` scrape uses a Cloud Run identity token and the same
+metrics audience as the private indexers. `deploy-alloy-gce.sh` configures that
+audience and grants the scraper service account `roles/run.invoker` on Career.
+The application’s `/internal/**` token protection remains unchanged.
+
+The Portfolio monitoring API labels this job **Career Workflow Service** and appends
+it after the existing services, inside the default-collapsed “more services” list.
+A successful scrape is required for **UP**; Career is not inferred to be idle from
+missing samples. The 60-second scrape cadence can wake a scale-to-zero instance.
+
+The Grafana dashboard includes a default-collapsed **Career Workflow Service** row
+with availability, heap, uptime, threads, CPU, request rate, and HTTP 5xx rate. Its
+portable panel definition is in `career-grafana-row.json`. Deploy the Alloy image
+and publish the Portfolio API change together when recreating this integration. Verify `up{job="portfolio-application-copilot"}`
+and JVM samples in Grafana after deployment.
+
 ## Key Metrics Available
 
 Once scraped, you'll have out-of-the-box:

@@ -66,6 +66,25 @@ prometheus.scrape "portfolio_rag_indexer" {
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]
 }
 
+// Career metrics stay behind Cloud Run IAM, like the private indexers.
+prometheus.scrape "portfolio_career" {
+  targets = [
+    {"__address__" = "portfolio-application-copilot-y45c2mnbja-uc.a.run.app", "job" = "portfolio-application-copilot"},
+  ]
+
+  scheme          = "https"
+  metrics_path    = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout  = "15s"
+
+  authorization {
+    type             = "Bearer"
+    credentials_file = "/var/run/cloud-run-identity/token"
+  }
+
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
 loki.write "grafana_cloud" {
   endpoint {
     url = env("GRAFANA_LOKI_URL")

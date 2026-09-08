@@ -61,7 +61,7 @@ elif ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" \
   exit 1
 fi
 
-for service in portfolio-search-indexer portfolio-rag-indexer; do
+for service in portfolio-search-indexer portfolio-rag-indexer portfolio-application-copilot; do
   if ! gcloud run services describe "${service}" \
     --project="${PROJECT_ID}" \
     --region="${REGION}" \
