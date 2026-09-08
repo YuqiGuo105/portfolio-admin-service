@@ -15,7 +15,8 @@ public interface BlogRepository extends JpaRepository<Blog, UUID> {
         select b from Blog b
         where (cast(:keyword as string) is null or
                lower(coalesce(b.title,'')) like lower(concat('%', cast(:keyword as string), '%')) or
-               lower(coalesce(b.description,'')) like lower(concat('%', cast(:keyword as string), '%')))
+               lower(coalesce(b.description,'')) like lower(concat('%', cast(:keyword as string), '%')) or
+               lower(coalesce(b.content,'')) like lower(concat('%', cast(:keyword as string), '%')))
           and (cast(:category as string) is null or b.category = cast(:category as string))
         order by coalesce(b.date, '') desc
     """)
