@@ -22,6 +22,14 @@ public class IndexingJobService {
 
     private final IndexingJobRepository repository;
 
+    @Transactional
+    public IndexingJob enqueueKnowledge(String sourceId, int version) {
+        String key = "RAG_INDEX:OWNER_QA:" + sourceId + ":v" + version;
+        return repository.findByIdempotencyKey(key).orElseGet(() -> repository.save(IndexingJob.builder()
+                .jobType(JobType.RAG_INDEX).sourceType("OWNER_QA").sourceIdText(sourceId)
+                .sourceVersion(version).status(JobStatus.PENDING).idempotencyKey(key).build()));
+    }
+
     public static String publishKey(JobType jobType, SourceType sourceType, String sourceId, int version) {
         return jobType.name() + ":" + sourceType.name() + ":" + sourceId + ":v" + version;
     }

@@ -52,7 +52,7 @@ public class WebConfig {
         cfg.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim).filter(s -> !s.isBlank()).toList());
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
-        cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Admin-Secret"));
+        cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Admin-Secret", "Idempotency-Key"));
         cfg.setExposedHeaders(List.of("Content-Type"));
         cfg.setAllowCredentials(true);
         cfg.setMaxAge(3600L);

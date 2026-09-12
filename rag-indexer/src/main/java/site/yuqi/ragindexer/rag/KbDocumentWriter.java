@@ -30,6 +30,9 @@ public class KbDocumentWriter {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
 
+    @org.springframework.beans.factory.annotation.Value("${portfolio.gemini.embedding-model:gemini-embedding-001}")
+    private String embeddingModel = "gemini-embedding-001";
+
     /**
      * Mark all currently-ACTIVE chunks for this source as SUPERSEDED. New
      * chunks then come in as ACTIVE in the same transaction.
@@ -41,6 +44,25 @@ public class KbDocumentWriter {
                                    java.util.List<float[]> embeddings) {
         if (chunks.size() != embeddings.size()) {
             throw new IllegalArgumentException("chunk count != embedding count");
+        }
+
+        if ("OWNER_QA".equals(source.getSourceType())) {
+            // Serialize with admin edits/deletes, then reject results embedded from a stale source.
+            var current = jdbc.queryForList("""
+                    select md5(content) as hash,metadata->>'management_version' as version,
+                           metadata->>'status' as status,metadata->>'answer_visibility' as visibility
+                    from public.kb_documents where id=? for update
+                    """, java.util.UUID.fromString(source.getSourceId()));
+            if (current.isEmpty()) return;
+            var row = current.get(0);
+            if (!"ACTIVE".equals(row.get("status")) || !"public".equals(row.get("visibility"))
+                    || !String.valueOf(sourceVersion).equals(row.get("version"))
+                    || !java.util.Objects.equals(source.getOriginalContentMd5(), row.get("hash"))) return;
+            for (float[] vector : embeddings) {
+                if (vector.length != 1536) throw new IllegalArgumentException("Knowledge embeddings must have 1536 dimensions");
+                for (float value : vector) if (!Float.isFinite(value))
+                    throw new IllegalArgumentException("Knowledge embedding contains a non-finite value");
+            }
         }
 
         // Replaying the same Kafka event must replace, not accumulate, the
@@ -87,6 +109,11 @@ public class KbDocumentWriter {
     /** Convenience for "delete this source from RAG entirely" (source row gone). */
     @Transactional
     public void supersedeAll(String sourceType, String sourceId) throws DataAccessException {
+        if ("OWNER_QA".equals(sourceType)) {
+            var rows = jdbc.queryForList("select metadata->>'status' as status from public.kb_documents where id=? for update",
+                    java.util.UUID.fromString(sourceId));
+            if (!rows.isEmpty() && "ACTIVE".equals(rows.get(0).get("status"))) return;
+        }
         jdbc.update("""
                 UPDATE public.kb_documents
                    SET metadata = jsonb_set(metadata, '{status}', '"SUPERSEDED"')
@@ -106,6 +133,15 @@ public class KbDocumentWriter {
         m.put("title", s.getTitle());
         m.put("url", s.getUrl());
         m.put("status", "ACTIVE");
+        if ("OWNER_QA".equals(s.getSourceType())) {
+            m.put("original_content_md5", s.getOriginalContentMd5());
+            m.put("answer_visibility", "public");
+            m.put("source_requires_login", true);
+            m.put("evidence_review", "approved");
+            m.put("retrieval_eligible", true);
+            m.put("embedding_model", embeddingModel);
+            m.put("embedding_dimensions", 1536);
+        }
         return m;
     }
 

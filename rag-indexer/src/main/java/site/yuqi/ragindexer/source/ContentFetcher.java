@@ -22,6 +22,7 @@ public class ContentFetcher {
 
     public Optional<RagSource> fetch(String sourceType, String sourceId) {
         return switch (sourceType) {
+            case "OWNER_QA"   -> fetchKnowledge(sourceId);
             case "BLOG"       -> fetchBlog(sourceId);
             case "PROJECT"    -> fetchProject(sourceId);
             case "LIFE_BLOG"  -> fetchLifeBlog(sourceId);
@@ -31,6 +32,20 @@ public class ContentFetcher {
                 yield Optional.empty();
             }
         };
+    }
+
+    private Optional<RagSource> fetchKnowledge(String id) {
+        return jdbc.query("""
+                select id,content,md5(content) as content_md5,metadata->>'title' as title,
+                       metadata->>'question' as question,(metadata->>'management_version')::int as version
+                from public.kb_documents where id=? and metadata->>'type'='chat_qa'
+                  and metadata->>'status'='ACTIVE' and metadata->>'answer_visibility'='public'
+                  and metadata->>'evidence_review'='approved'
+                  and coalesce(metadata->>'source_type','')=''
+                """, (rs, n) -> RagSource.builder().sourceType("OWNER_QA").sourceId(id)
+                .title(rs.getString("title")).summary(rs.getString("question")).content(rs.getString("content"))
+                .url("").knowledgeVersion(rs.getInt("version")).originalContentMd5(rs.getString("content_md5"))
+                .build(), UUID.fromString(id)).stream().findFirst();
     }
 
     private Optional<RagSource> fetchBlog(String id) {

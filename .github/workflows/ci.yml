@@ -19,6 +19,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    services:
+      knowledge-postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: alerts_test
+          POSTGRES_DB: admin_kb_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alerts_test -d admin_kb_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      KNOWLEDGE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/admin_kb_test
+      KNOWLEDGE_RAG_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/rag_kb_test
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,6 +47,9 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+
+      - name: Create isolated RAG test database
+        run: psql -h 127.0.0.1 -U alerts_test -d admin_kb_test -v ON_ERROR_STOP=1 -c 'CREATE DATABASE rag_kb_test'
 
       - name: Verify Maven reactor
         run: mvn -B -ntp verify

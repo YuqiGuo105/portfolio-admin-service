@@ -13,4 +13,6 @@ public class RagSource {
     private String summary;
     private String content;      // the long text to embed
     private String url;          // canonical site URL for citation
+    private Integer knowledgeVersion;
+    private String originalContentMd5;
 }

@@ -96,6 +96,11 @@ public class RagIndexConsumer {
             }
 
             RagSource source = sourceOpt.get();
+            if (source.getKnowledgeVersion() != null && source.getKnowledgeVersion() != evt.getSourceVersion()) {
+                jobs.markDone(jobId);
+                ack.acknowledge();
+                return;
+            }
             String fullText = buildRagText(source);
             List<String> chunks = chunker.chunk(fullText);
             if (chunks.isEmpty()) {
