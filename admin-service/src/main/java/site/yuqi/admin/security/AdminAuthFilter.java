@@ -230,6 +230,12 @@ public class AdminAuthFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
         String method = request.getMethod();
 
+        if (path.equals("/api/admin/content/search-projection")
+                || path.startsWith("/api/admin/content/search-projection/")
+                || path.startsWith("/api/admin/content/search-projection;")) {
+            return atLeast(role, site.yuqi.admin.domain.AdminUserRole.ADMIN);
+        }
+
         if (path.equals("/api/admin/knowledge") || path.startsWith("/api/admin/knowledge/")) {
             return atLeast(role, site.yuqi.admin.domain.AdminUserRole.ADMIN);
         }

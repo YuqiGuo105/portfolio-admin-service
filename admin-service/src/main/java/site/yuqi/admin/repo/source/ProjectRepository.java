@@ -15,6 +15,8 @@ public interface ProjectRepository extends JpaRepository<Project, UUID> {
         select p from Project p
         where (cast(:keyword as string) is null or
                lower(coalesce(p.title,'')) like lower(concat('%', cast(:keyword as string), '%')) or
+               lower(coalesce(p.summary,'')) like lower(concat('%', cast(:keyword as string), '%')) or
+               lower(coalesce(p.technology,'')) like lower(concat('%', cast(:keyword as string), '%')) or
                lower(coalesce(p.content,'')) like lower(concat('%', cast(:keyword as string), '%')))
           and (cast(:category as string) is null or p.category = cast(:category as string))
         order by p.publishedAt desc nulls last

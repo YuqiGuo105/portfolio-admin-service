@@ -33,4 +33,17 @@ class ArticleBodySearchTest {
                 .extracting(Blog::getId).contains(article.getId());
         assertThat(blogs.search("unmatched-keyword", null, PageRequest.of(0, 10))).isEmpty();
     }
+
+    @Test
+    void discoversAliasesInTagsWithoutChangingCategoryBoundaries() {
+        var travel = entities.persistAndFlush(LifeBlog.builder().title("Road trip")
+                .description("A journey").category("Travel").tags("盐湖城,Salt Lake City,SLC").build());
+        var blog = entities.persistAndFlush(Blog.builder().title("Engineering notes")
+                .description("Versioning").category("Engineering").tags("版本控制,GitHub").build());
+        assertThat(life.search("盐湖城", "Travel", PageRequest.of(0, 10)))
+                .extracting(LifeBlog::getId).contains(travel.getId());
+        assertThat(life.search("SLC", "Career", PageRequest.of(0, 10))).isEmpty();
+        assertThat(blogs.search("版本控制", "Engineering", PageRequest.of(0, 10)))
+                .extracting(Blog::getId).contains(blog.getId());
+    }
 }

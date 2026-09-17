@@ -25,6 +25,7 @@ public class ContentListItemDto {
     private JobStatus ragStatus;
     private JobStatus searchStatus;
     private Object updatedAt;     // populated from version row when present
+    private SearchProjection search;
 
     public static ContentListItemDto fromNormalized(NormalizedContent c) {
         return ContentListItemDto.builder()

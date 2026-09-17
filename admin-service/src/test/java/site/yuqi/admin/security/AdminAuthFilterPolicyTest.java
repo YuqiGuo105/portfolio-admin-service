@@ -9,6 +9,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AdminAuthFilterPolicyTest {
 
     @Test
+    void fullTextSearchProjectionRequiresAdmin() {
+        for (String suffix : java.util.List.of("", "/", ";path=1")) {
+            var request = request("GET", "/api/admin/content/search-projection" + suffix);
+            for (var role : java.util.List.of(AdminUserRole.EDITOR, AdminUserRole.PUBLISHER)) {
+                assertThat(AdminAuthFilter.authorizeRequest(request, role, false)).isFalse();
+            }
+            assertThat(AdminAuthFilter.authorizeRequest(request, AdminUserRole.ADMIN, false)).isTrue();
+        }
+    }
+
+    @Test
     void privateKnowledgeRequiresAdminForReadsAndWrites() {
         for (String method : java.util.List.of("GET", "POST", "PUT", "DELETE")) {
             for (String path : java.util.List.of("/api/admin/knowledge", "/api/admin/knowledge/record")) {

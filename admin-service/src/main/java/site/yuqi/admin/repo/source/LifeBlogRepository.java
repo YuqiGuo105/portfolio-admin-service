@@ -15,6 +15,7 @@ public interface LifeBlogRepository extends JpaRepository<LifeBlog, Long> {
         where (cast(:keyword as string) is null or
                lower(coalesce(lb.title,'')) like lower(concat('%', cast(:keyword as string), '%')) or
                lower(coalesce(lb.description,'')) like lower(concat('%', cast(:keyword as string), '%')) or
+               lower(coalesce(lb.tags,'')) like lower(concat('%', cast(:keyword as string), '%')) or
                lower(coalesce(lb.content,'')) like lower(concat('%', cast(:keyword as string), '%')))
           and (cast(:category as string) is null or lb.category = cast(:category as string))
         order by lb.publishedAt desc nulls last

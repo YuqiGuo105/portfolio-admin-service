@@ -30,7 +30,7 @@ public class ContentFetcher {
 
     /** Looks up a source row and returns a document Map ready for OpenSearch. */
     public Optional<Map<String, Object>> fetchSearchDocument(String sourceType, String sourceId) {
-        return switch (sourceType) {
+        Optional<Map<String, Object>> document = switch (sourceType) {
             case "BLOG"       -> fetchBlog(sourceId);
             case "PROJECT"    -> fetchProject(sourceId);
             case "LIFE_BLOG"  -> fetchLifeBlog(sourceId);
@@ -40,6 +40,15 @@ public class ContentFetcher {
                 yield Optional.empty();
             }
         };
+        return document.map(doc -> {
+            doc.put("schema_version", 2);
+            doc.put("source_type", sourceType);
+            doc.put("source_id", sourceId);
+            doc.put("content", doc.getOrDefault("body", ""));
+            doc.put("image_url", doc.get("imageUrl"));
+            doc.putIfAbsent("requires_login", false);
+            return doc;
+        });
     }
 
     // ---- BLOG -------------------------------------------------------------
@@ -102,7 +111,7 @@ public class ContentFetcher {
 
     private Optional<Map<String, Object>> fetchLifeBlog(String sourceId) {
         String sql = """
-            SELECT id, title, description, category, tags, image_url, published_at
+            SELECT id, title, description, content, require_login, category, tags, image_url, published_at
               FROM public.life_blogs
              WHERE id = ?
             """;
@@ -114,6 +123,9 @@ public class ContentFetcher {
                 doc.put("type", "LIFE_BLOG");
                 doc.put("title", rs.getString("title"));
                 doc.put("summary", rs.getString("description"));
+                doc.put("body", plainText(rs.getString("content")));
+                doc.put("requires_login", !Boolean.FALSE.equals(rs.getObject("require_login")));
+                doc.put("published_at", rs.getString("published_at"));
                 doc.put("category", rs.getString("category"));
                 doc.put("tags", parseTags(rs.getString("tags")));
                 doc.put("imageUrl", rs.getString("image_url"));

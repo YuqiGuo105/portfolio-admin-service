@@ -54,6 +54,22 @@ public class ContentAdminController {
     private final ContentVersionRepository versionRepository;
     private final ContentCoverService contentCoverService;
 
+    @GetMapping("/search-projection")
+    @Operation(summary = "Bounded internal full-text search projection (administrator only)")
+    public ResponseEntity<Map<String, Object>> searchProjection(
+            @RequestParam("type") String typeRaw,
+            @RequestParam(value = "limit", defaultValue = "50") int limit) {
+        SourceType type = SourceType.parse(typeRaw)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown sourceType: " + typeRaw));
+        List<ContentListItemDto> items = contentService.listAll(type, null, null, Math.max(1, Math.min(50, limit)), 0)
+                .stream().map(content -> {
+                    ContentListItemDto dto = ContentListItemDto.fromNormalized(content);
+                    dto.setSearch(site.yuqi.admin.dto.SearchProjection.from(content));
+                    return dto;
+                }).toList();
+        return ResponseEntity.ok(Map.of("items", items, "schemaVersion", 1));
+    }
+
     @GetMapping
     @Operation(summary = "List content across one or all sources",
             description = "If no type is provided, results are merged across all four source types.")
