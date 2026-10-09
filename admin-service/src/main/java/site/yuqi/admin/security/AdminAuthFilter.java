@@ -119,17 +119,18 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest req) {
-        String p = req.getRequestURI();
-        return PUBLIC_PREFIXES.stream().anyMatch(p::startsWith);
+        String path = RequestPaths.canonical(req);
+        return path != null && (PUBLIC_PREFIXES.stream().anyMatch(prefix -> RequestPaths.under(path, prefix))
+                || RequestPaths.under(path, "/api/internal"));
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws ServletException, IOException {
 
-        String path = req.getRequestURI();
-        if (!path.startsWith("/api/admin")) {
-            chain.doFilter(req, res);
+        String path = RequestPaths.canonical(req);
+        if (path == null) {
+            writeError(res, 400, "invalid_path", "Non-canonical request path.");
             return;
         }
 
@@ -227,7 +228,8 @@ public class AdminAuthFilter extends OncePerRequestFilter {
             site.yuqi.admin.domain.AdminUserRole role,
             boolean owner
     ) {
-        String path = request.getRequestURI();
+        String path = RequestPaths.canonical(request);
+        if (!RequestPaths.under(path, "/api/admin")) return false;
         String method = request.getMethod();
 
         if (path.equals("/api/admin/content/search-projection")

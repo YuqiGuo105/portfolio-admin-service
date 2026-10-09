@@ -16,7 +16,6 @@ import java.security.MessageDigest;
 @Component
 public class InternalTokenFilter extends OncePerRequestFilter {
 
-    private static final String INTERNAL_PREFIX = "/api/internal/";
     private static final String HEADER = "X-Internal-Token";
 
     private final String expected;
@@ -27,8 +26,8 @@ public class InternalTokenFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        return path == null || !path.startsWith(INTERNAL_PREFIX);
+        String path = RequestPaths.canonical(request);
+        return path != null && !RequestPaths.under(path, "/api/internal");
     }
 
     @Override
@@ -36,6 +35,10 @@ public class InternalTokenFilter extends OncePerRequestFilter {
             HttpServletRequest request,
             HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
+        if (RequestPaths.canonical(request) == null) {
+            writeError(response, HttpServletResponse.SC_BAD_REQUEST, "non-canonical request path");
+            return;
+        }
         if (expected.isEmpty()) {
             writeError(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "internal token is not configured");
             return;

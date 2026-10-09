@@ -54,7 +54,7 @@ jobs:
           cache: maven
 
       - name: Build JAR
-        run: mvn -B -DskipTests package -pl admin-service -am
+        run: mvn -B -ntp verify -pl admin-service -am
 
       - name: Compute image tag
         id: tag

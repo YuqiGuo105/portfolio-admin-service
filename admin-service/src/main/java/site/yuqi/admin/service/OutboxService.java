@@ -5,6 +5,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 import site.yuqi.admin.adapter.NormalizedContent;
 import site.yuqi.admin.domain.ContentEventOutbox;
 import site.yuqi.admin.domain.OutboxEventType;
@@ -154,7 +155,7 @@ public class OutboxService {
         return repository.findAllById(claimedIds);
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<ContentEventOutbox> markOutboxEventProcessing(UUID eventId, long leaseSeconds) {
         return repository.findById(eventId).map(event -> {
             if (event.getStatus() == OutboxStatus.SENT || event.getStatus() == OutboxStatus.DLQ) {
@@ -166,7 +167,7 @@ public class OutboxService {
         });
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markOutboxEventSent(UUID eventId) {
         repository.findById(eventId).ifPresent(e -> {
             if (e.getStatus() != OutboxStatus.PROCESSING) return;
@@ -176,7 +177,7 @@ public class OutboxService {
         });
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markOutboxEventFailed(UUID eventId, String error) {
         repository.findById(eventId).ifPresent(e -> {
             if (e.getStatus() != OutboxStatus.PROCESSING) return;

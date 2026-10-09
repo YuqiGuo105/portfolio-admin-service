@@ -53,7 +53,7 @@ jobs:
           cache: maven
 
       - name: Build JAR
-        run: mvn -B -DskipTests package -pl search-indexer -am
+        run: mvn -B -ntp verify -pl search-indexer -am
 
       - name: Compute image tag
         id: tag

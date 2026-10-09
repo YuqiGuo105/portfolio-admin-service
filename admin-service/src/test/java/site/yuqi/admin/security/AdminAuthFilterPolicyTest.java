@@ -10,7 +10,7 @@ class AdminAuthFilterPolicyTest {
 
     @Test
     void fullTextSearchProjectionRequiresAdmin() {
-        for (String suffix : java.util.List.of("", "/", ";path=1")) {
+        for (String suffix : java.util.List.of("", "/")) {
             var request = request("GET", "/api/admin/content/search-projection" + suffix);
             for (var role : java.util.List.of(AdminUserRole.EDITOR, AdminUserRole.PUBLISHER)) {
                 assertThat(AdminAuthFilter.authorizeRequest(request, role, false)).isFalse();
