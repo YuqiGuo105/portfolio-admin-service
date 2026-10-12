@@ -27,6 +27,7 @@ public class ContentListItemDto {
     private Object updatedAt;     // populated from version row when present
     private SearchProjection search;
     private String period;
+    private boolean requireLogin;
 
     public static ContentListItemDto fromNormalized(NormalizedContent c) {
         return ContentListItemDto.builder()
@@ -37,6 +38,7 @@ public class ContentListItemDto {
                 .category(c.getCategory())
                 .tags(c.getTags())
                 .url(c.getUrl())
+                .requireLogin(SearchProjection.requiresLogin(c))
                 .period(c.getSourceType() == site.yuqi.admin.domain.SourceType.EXPERIENCE && c.getRaw() != null
                         && c.getRaw().get("date") != null ? String.valueOf(c.getRaw().get("date")) : null)
                 .build();

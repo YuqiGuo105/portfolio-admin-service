@@ -76,5 +76,14 @@ class ProjectAdapterTest {
 
         assertThat(normalized.getSummary()).hasSize(280).endsWith("...");
         assertThat(normalized.getSummary()).doesNotContain("<h1>");
+        assertThat(normalized.getSummary()).doesNotContain("Architecture");
+    }
+
+    @Test void summaryUsesARealParagraphWithoutHeadingOrEntityNoise() {
+        var project = Project.builder().id(UUID.randomUUID()).title("Platform")
+                .content("<style>hidden</style><h1>Production Case Study</h1><p>A backend&nbsp;platform connects publishing, search, and notifications through independently deployed services.</p>").build();
+        when(repository.findById(project.getId())).thenReturn(Optional.of(project));
+        assertThat(adapter.get(project.getId().toString()).orElseThrow().getSummary())
+                .startsWith("A backend platform connects").doesNotContain("hidden", "Case Study", "&nbsp;");
     }
 }

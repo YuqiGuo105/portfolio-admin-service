@@ -182,10 +182,10 @@ public class ProjectAdapter implements ContentAdapter {
         if (project.getContent() == null || project.getContent().isBlank()) {
             return "";
         }
-        String plainText = project.getContent()
-                .replaceAll("<[^>]+>", " ")
-                .replaceAll("\\s+", " ")
-                .trim();
+        var document = org.jsoup.Jsoup.parse(project.getContent());
+        document.select("script,style,nav,header,footer").remove();
+        String plainText = document.select("p").stream().map(org.jsoup.nodes.Element::text)
+                .filter(text -> text.length() >= 60).findFirst().orElseGet(document::text);
         return plainText.length() <= 280 ? plainText : plainText.substring(0, 277) + "...";
     }
 

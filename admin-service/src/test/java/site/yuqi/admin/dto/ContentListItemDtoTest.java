@@ -7,6 +7,15 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ContentListItemDtoTest {
+    @Test void listAndProjectionUseTheSameCurrentAccessFlag() {
+        var content = NormalizedContent.builder().sourceType(SourceType.LIFE_BLOG).sourceId("1").build();
+        assertTrue(ContentListItemDto.fromNormalized(content).isRequireLogin());
+        for (boolean locked : new boolean[]{false, true}) {
+            content.setRaw(Map.of("require_login", locked));
+            assertEquals(locked, ContentListItemDto.fromNormalized(content).isRequireLogin());
+            assertEquals(locked, SearchProjection.from(content).requiresLogin());
+        }
+    }
     @Test void preservesExperienceDatesWithoutInventingOrLeakingRawFields() {
         var content = NormalizedContent.builder().sourceType(SourceType.EXPERIENCE)
                 .sourceId("current-role").title("Current employer")
