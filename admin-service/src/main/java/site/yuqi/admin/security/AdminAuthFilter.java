@@ -2,10 +2,6 @@ package site.yuqi.admin.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jws;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,18 +14,18 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import site.yuqi.admin.dto.ApiError;
 import site.yuqi.admin.service.AdminUserService;
 
-import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
  * Guards {@code /api/admin/**} endpoints with a <strong>dual auth channel</strong>:
  * <ol>
  *     <li><strong>Primary (browser):</strong>
- *         {@code Authorization: Bearer <Supabase HS256 JWT>} whose {@code email}
+ *         {@code Authorization: Bearer <Supabase access token>} whose {@code email}
  *         claim resolves to an active {@code admin_users} row, a configured
  *         owner, or the break-glass allow-list. This is the path used by the
  *         Portfolio admin panel and Mr. Pot chat widget.</li>
@@ -82,13 +78,13 @@ public class AdminAuthFilter extends OncePerRequestFilter {
     );
 
     private final String adminSecret;
-    private final SecretKey supabaseKey; // nullable
+    private final SupabaseTokenVerifier tokenVerifier;
     private final List<String> allowedEmails;
     private final AdminUserService adminUserService;
 
     public AdminAuthFilter(
             @Value("${portfolio.admin.secret:}") String adminSecret,
-            @Value("${portfolio.supabase.jwt-secret:}") String supabaseJwtSecret,
+            SupabaseTokenVerifier tokenVerifier,
             @Value("${portfolio.supabase.allowed-emails:}") String allowedEmailsCsv,
             AdminUserService adminUserService
     ) {
@@ -98,23 +94,7 @@ public class AdminAuthFilter extends OncePerRequestFilter {
                 ? List.of()
                 : Arrays.stream(allowedEmailsCsv.split(","))
                     .map(String::trim).filter(s -> !s.isBlank()).map(String::toLowerCase).toList();
-        this.supabaseKey = buildKey(supabaseJwtSecret);
-    }
-
-    private static SecretKey buildKey(String raw) {
-        if (raw == null || raw.isBlank()) return null;
-        // Supabase signs JWTs using the JWT secret's raw UTF-8 bytes as the
-        // HMAC key (same convention as supabase-js / PostgREST / GoTrue). The
-        // previous "try Base64 decode first, fall back to UTF-8" heuristic
-        // silently corrupted secrets that happened to be valid base64 strings
-        // (e.g. an 88-char secret ending in '==' decodes cleanly to 64 random
-        // bytes but Supabase actually signed with the 88 ASCII bytes), turning
-        // every authenticated request into a 401 invalid_token. Just trust the
-        // raw bytes — if the dashboard hands you a base64-encoded secret, paste
-        // it verbatim and it Just Works because Supabase HMACs the verbatim
-        // characters either way.
-        byte[] bytes = raw.trim().getBytes(StandardCharsets.UTF_8);
-        return Keys.hmacShaKeyFor(bytes);
+        this.tokenVerifier = tokenVerifier;
     }
 
     @Override
@@ -145,7 +125,7 @@ public class AdminAuthFilter extends OncePerRequestFilter {
         // Primary path: Bearer Supabase JWT (browser & chat widget).
         String authz = req.getHeader("Authorization");
         if (authz != null && authz.regionMatches(true, 0, "Bearer ", 0, 7)) {
-            if (supabaseKey == null) {
+            if (!tokenVerifier.isConfigured()) {
                 writeError(res, 503, "auth_unconfigured",
                         "Supabase JWT verification is not configured on the server.");
                 return;
@@ -155,20 +135,16 @@ public class AdminAuthFilter extends OncePerRequestFilter {
                 writeError(res, 401, "invalid_token", "Empty Bearer token.");
                 return;
             }
-            Jws<Claims> jws;
+            Map<String, Object> claims;
             try {
-                jws = Jwts.parser()
-                        .verifyWith(supabaseKey)
-                        .build()
-                        .parseSignedClaims(token);
+                claims = tokenVerifier.verify(token);
             } catch (Exception e) {
-                log.debug("Supabase JWT validation failed: {}", e.getMessage());
+                log.debug("Supabase JWT validation failed");
                 writeError(res, 401, "invalid_token",
                         "Supabase session is invalid or expired; please sign in again.");
                 return;
             }
 
-            Claims claims = jws.getPayload();
             String email = lowerStr(claims.get("email"));
             if (email == null) {
                 writeError(res, 401, "invalid_token",

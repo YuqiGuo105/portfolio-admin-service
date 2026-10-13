@@ -23,7 +23,7 @@ class SearchProjectionControllerTest {
                         .title("Travel").content("Salt Lake City").raw(Map.of("require_login", true)).build()));
         var controller = new ContentAdminController(content, null, null, null, null, null);
         var mvc = MockMvcBuilders.standaloneSetup(controller)
-                .addFilters(new AdminAuthFilter("test-secret", "", "", null)).build();
+                .addFilters(new AdminAuthFilter("test-secret", new site.yuqi.admin.security.SupabaseTokenVerifier("", ""), "", null)).build();
         mvc.perform(get("/api/admin/content/search-projection").param("type", "LIFE_BLOG"))
                 .andExpect(status().isUnauthorized());
         verifyNoInteractions(content);

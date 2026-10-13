@@ -21,7 +21,7 @@ class AdminAuthFilterPathTest {
         request.addHeader("X-Admin-Secret", "test-secret");
         var response = new MockHttpServletResponse();
         var chain = mock(FilterChain.class);
-        new AdminAuthFilter("test-secret", "", "", mock(AdminUserService.class))
+        new AdminAuthFilter("test-secret", new SupabaseTokenVerifier("", ""), "", mock(AdminUserService.class))
                 .doFilter(request, response, chain);
         assertThat(response.getStatus()).isEqualTo(400);
         verifyNoInteractions(chain);
@@ -32,7 +32,7 @@ class AdminAuthFilterPathTest {
     void unknownAndAdminRoutesRequireCredentials(String path) throws Exception {
         var response = new MockHttpServletResponse();
         var chain = mock(FilterChain.class);
-        new AdminAuthFilter("test-secret", "", "", mock(AdminUserService.class))
+        new AdminAuthFilter("test-secret", new SupabaseTokenVerifier("", ""), "", mock(AdminUserService.class))
                 .doFilter(new MockHttpServletRequest("GET", path), response, chain);
         assertThat(response.getStatus()).isEqualTo(401);
         verifyNoInteractions(chain);
@@ -43,7 +43,7 @@ class AdminAuthFilterPathTest {
         var request = new MockHttpServletRequest("GET", "/api/health");
         var response = new MockHttpServletResponse();
         var chain = mock(FilterChain.class);
-        new AdminAuthFilter("test-secret", "", "", mock(AdminUserService.class))
+        new AdminAuthFilter("test-secret", new SupabaseTokenVerifier("", ""), "", mock(AdminUserService.class))
                 .doFilter(request, response, chain);
         verify(chain).doFilter(request, response);
     }

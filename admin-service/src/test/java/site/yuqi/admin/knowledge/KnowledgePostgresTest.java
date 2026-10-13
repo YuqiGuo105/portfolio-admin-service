@@ -50,7 +50,7 @@ class KnowledgePostgresTest {
         service = new KnowledgeService(repo, audit, jobs, mock(KnowledgeIndexDispatcher.class));
         mvc = MockMvcBuilders.standaloneSetup(new KnowledgeAdminController(service))
                 .setControllerAdvice(new GlobalExceptionHandler())
-                .addFilters(new AdminAuthFilter("local-test-secret", "", "", mock(AdminUserService.class))).build();
+                .addFilters(new AdminAuthFilter("local-test-secret", new site.yuqi.admin.security.SupabaseTokenVerifier("", ""), "", mock(AdminUserService.class))).build();
     }
     KnowledgeMutation draft(String text) { return new KnowledgeMutation("Test knowledge", "Example question", text, "DRAFT", "private", null); }
     Map<String,Object> create() { return tx.execute(s -> service.create(draft("Synthetic answer"), "create-key-12345", actor)); }
