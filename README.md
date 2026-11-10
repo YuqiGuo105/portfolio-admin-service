@@ -190,8 +190,16 @@ suspend administrators. Owners are deployment policy rather than mutable rows,
 so the UI cannot demote or suspend the recovery account. `ADMIN_ALLOWED_EMAILS`
 is retained only as a break-glass fallback and should normally be empty.
 
-**Swagger UI** at `/swagger-ui.html` is whitelisted (no filter) so humans can
-log in there: click **Authorize**, pick `BearerAuth`, paste `Bearer <token>`.
+**Private API documentation** is available in Portfolio at `/admin/api-docs`.
+The page reuses the current administrator session; no token copying is required.
+Swagger UI assets, `/v3/api-docs` (including YAML and configuration variants),
+and legacy documentation routes require an active `ADMIN` identity or the
+existing internal admin credential. Anonymous requests return 401; lesser
+admin roles return 403. Documentation responses are not cached.
+
+Deploy this filter change together with the Portfolio protected documentation
+viewer. The viewer is read-only and disables external validation and API
+execution; operational writes continue through the authenticated admin tools.
 
 ### Where these endpoints surface in the Portfolio
 
@@ -219,7 +227,7 @@ log in there: click **Authorize**, pick `BearerAuth`, paste `Bearer <token>`.
 | POST   | `/api/admin/indexing-jobs/{jobId}/retry`                          | Retry FAILED / SKIPPED job                                           |
 | GET    | `/api/admin/outbox-events`                                        | Inspect outbox for debugging                                         |
 | GET    | `/actuator/health`                                                | Liveness, no auth                                                    |
-| GET    | `/swagger-ui.html`                                                | OpenAPI docs                                                         |
+| GET    | `/v3/api-docs`                                                    | Private OpenAPI definition; ADMIN credentials required                |
 
 ---
 
@@ -307,7 +315,9 @@ OPENAI_API_KEY=sk-... \
 mvn -pl rag-indexer     -am -DskipTests spring-boot:run   # :8083
 ```
 
-Swagger: <http://localhost:8081/swagger-ui.html>
+Documentation: open `/admin/api-docs` on the Portfolio frontend after signing
+in as an administrator. Direct backend documentation requests require the
+same authorization headers as other protected admin endpoints.
 
 End-to-end smoke (after `ADMIN_SECRET` is set):
 

@@ -34,10 +34,9 @@ import java.util.Set;
  *         Use this only for internal automation, smoke tests, or CI hooks.</li>
  * </ol>
  *
- * <p>The whitelist {@link #PUBLIC_PREFIXES} (Swagger UI, OpenAPI, actuator)
- * is unauthenticated by design — Swagger UI itself drives the {@code Authorize}
- * dialog where humans paste a Supabase Bearer token before calling
- * {@code /api/admin/**}.
+ * <p>Swagger UI and OpenAPI definitions require ADMIN authorization, just like
+ * private operational data. The Portfolio admin viewer supplies the signed-in
+ * user's Bearer token; documentation URLs never carry credentials.
  *
  * <p>Error responses distinguish three failure modes so the frontend can react
  * sensibly:
@@ -70,11 +69,7 @@ public class AdminAuthFilter extends OncePerRequestFilter {
 
     private static final Set<String> PUBLIC_PREFIXES = Set.of(
             "/api/health",
-            "/actuator",
-            "/swagger-ui",
-            "/v3/api-docs",
-            "/swagger-resources",
-            "/webjars"
+            "/actuator"
     );
 
     private final String adminSecret;
@@ -205,6 +200,10 @@ public class AdminAuthFilter extends OncePerRequestFilter {
             boolean owner
     ) {
         String path = RequestPaths.canonical(request);
+        if (isDocumentationPath(path)) {
+            return ("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod()))
+                    && atLeast(role, site.yuqi.admin.domain.AdminUserRole.ADMIN);
+        }
         if (!RequestPaths.under(path, "/api/admin")) return false;
         String method = request.getMethod();
 
@@ -233,6 +232,14 @@ public class AdminAuthFilter extends OncePerRequestFilter {
             return atLeast(role, site.yuqi.admin.domain.AdminUserRole.EDITOR);
         }
         return atLeast(role, site.yuqi.admin.domain.AdminUserRole.ADMIN);
+    }
+
+    private static boolean isDocumentationPath(String path) {
+        return "/swagger-ui.html".equals(path) || "/v3/api-docs.yaml".equals(path)
+                || RequestPaths.under(path, "/swagger-ui")
+                || RequestPaths.under(path, "/v3/api-docs")
+                || RequestPaths.under(path, "/swagger-resources")
+                || RequestPaths.under(path, "/webjars");
     }
 
     private static boolean atLeast(
