@@ -1,5 +1,64 @@
 # Grafana Cloud Free Tier — Portfolio Platform Monitoring
 
+## One service registry
+
+Edit **`monitoring/services.yaml`**. The existing `jvm` and `health` templates
+generate Alloy scrapes, Grafana service rows, and public display metadata. A new
+public Cloud Run service needs only this entry (the endpoint must actually exist):
+
+```yaml
+- id: new-service
+  name: New Service
+  monitoring: jvm # or health
+  endpoint: https://new-service-PROJECT.REGION.run.app/actuator/prometheus
+  intervalSeconds: 120
+  public: true
+```
+
+For `health`, use `/health`; the default body requires `status: ok` or `status: UP`.
+`healthProfile: ok` supports `ok: true`; `mcp` additionally checks the MCP server
+identity. Optional `purpose`, `stack`, `repo`, and `module` enrich hover details.
+Unknown metric types require a reviewed template, not arbitrary PromQL or URLs.
+
+Run `npm ci --prefix monitoring`, `npm test --prefix monitoring`, and
+`npm run generate --prefix monitoring`. The monitoring workflow also generates
+outputs before building, so a future service addition only needs a YAML edit.
+Pull requests validate the image but cannot deploy or read the Grafana secret.
+Monitoring-only main pushes do not trigger the Java application release pipeline.
+
+The frontend reads the fixed, public GitHub registry on its server, coalesces
+refreshes for five minutes, and includes sanitized metadata in the existing
+`/api/metrics` response. No client-side registry fetch, new poll, or per-service
+summary query is added. During an upstream outage it retains the last successful
+registry for at most 15 minutes; cold starts fail closed. Visibility changes are
+eventually consistent with these caches. Endpoints and IAM settings are not sent
+in the browser payload. This public repository must never contain credentials.
+
+`public: false` removes the service from homepage details and registry-managed
+Grafana rows/aggregate queries, but still collects its metrics. It is not an IAM
+setting. `access: cloud-run-iam` requires a separately approved exact endpoint in
+`access-approvals.json`, an existing audience and an existing invoker grant.
+`verify-access.mjs` only reads those grants; ordinary deployments never add them.
+Manual VM bootstrap is opt-in and does not grant private service access either.
+
+`sync-dashboard.mjs` reconciles only tagged service rows and the known legacy
+aggregate panels. Other panels and share settings are preserved. It saves a
+backup before an optimistic-version update. The workflow supplies the existing
+`GRAFANA_RENDER_TOKEN` via an Actions Secret only to monitoring verification and
+dashboard reconciliation steps. To roll back,
+revert the registry commit and rerun the monitoring workflow; this does not
+change service permissions or Cloud Run scaling.
+
+Current cadence is unchanged: **13 services, 16,560 checks/day**. Validation
+rejects duplicate IDs/endpoints, unapproved private targets, intervals below
+60 seconds, more than 50 services, or over 24,000 checks/day. These are workload
+guards, not a dollar budget: additional services still add backend scrape/series
+cost and can wake idle instances. No new VM, model calls, or browser polling.
+One additional local collector heartbeat every 120 seconds sends only one
+revision-labelled series (720 samples/day, no external service wakeup). Deployment
+waits for this revision before accepting health checks; old healthy data cannot
+make a failed collector update look successful.
+
 ## Media and Node services
 
 The existing e2-micro Alloy collector also monitors these services:
@@ -10,8 +69,8 @@ The existing e2-micro Alloy collector also monitors these services:
 | Voice Relay | `/health` | 120s | JSON health result, response duration, HTTP status |
 | MCP Server | `/health` | 120s | JSON health result, response duration, HTTP status |
 
-Media accepts the existing `https://portfolio-metrics.internal` audience. Only
-the collector identity is added as a Cloud Run invoker; no bucket permissions,
+Media accepts the existing `https://portfolio-metrics.internal` audience. The
+collector identity already has Cloud Run invoker access; no bucket permissions,
 raw-media access, service credentials, AI budgets, or scaling limits change.
 Node probes require HTTP 200 plus the expected JSON fields, and follow no
 redirects. Use `probe_success`, not exporter `up`, for target availability.
@@ -27,7 +86,8 @@ continues to use cached server-side queries, not direct service polling.
 Validate with `alloy validate monitoring/alloy/config.alloy` (set the two Grafana
 URL variables), and `node --test monitoring/service-panels.test.mjs`.
 The image build also validates the config with pinned Alloy 1.22.0.
-`add-service-panels.mjs` previews an append-only change to `spring_boot_21`.
+`add-service-panels.mjs` is the legacy one-time migration. Use
+`sync-dashboard.mjs` for all ongoing registry updates to `spring_boot_21`.
 Set `GRAFANA_RENDER_TOKEN` and run it without arguments first; `--apply` requires
 `GRAFANA_DASHBOARD_BACKUP` and preserves the dashboard version for optimistic
 concurrency. Existing panels and public-share settings remain unchanged.
@@ -166,9 +226,10 @@ Alerts can notify via: Email, Slack, Discord, PagerDuty (all free).
 ## Career Workflow Service
 
 `portfolio-application-copilot` exposes JVM and HTTP metrics at `/actuator/prometheus`.
-The Alloy `portfolio_career` scrape uses a Cloud Run identity token and the same
-metrics audience as the private indexers. `deploy-alloy-gce.sh` configures that
-audience and grants the scraper service account `roles/run.invoker` on Career.
+The generated Alloy scrape uses a Cloud Run identity token and the same
+metrics audience as the private indexers. The audience and the scraper service
+account's `roles/run.invoker` grant must already exist; deployments only verify
+them and never add access.
 The application’s `/internal/**` token protection remains unchanged.
 
 The Portfolio monitoring API labels this job **Career Workflow Service** and appends
@@ -178,8 +239,8 @@ missing samples. The 60-second scrape cadence can wake a scale-to-zero instance.
 
 The Grafana dashboard includes a default-collapsed **Career Workflow Service** row
 with availability, heap, uptime, threads, CPU, request rate, and HTTP 5xx rate. Its
-portable panel definition is in `career-grafana-row.json`. Deploy the Alloy image
-and publish the Portfolio API change together when recreating this integration. Verify `up{job="portfolio-application-copilot"}`
+legacy panel definition is in `career-grafana-row.json`; ongoing updates use
+`sync-dashboard.mjs` and the registry. Verify `up{job="portfolio-application-copilot"}`
 and JVM samples in Grafana after deployment.
 
 ## Key Metrics Available

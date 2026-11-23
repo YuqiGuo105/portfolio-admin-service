@@ -8,6 +8,11 @@ on:
       - ".github/workflows/deploy-monitoring.yml"
       - ".github/workflows/monitoring-watchdog.yml"
   workflow_dispatch: {}
+  pull_request:
+    branches: [main]
+    paths:
+      - 'monitoring/**'
+      - '.github/workflows/deploy-monitoring.yml'
 
 permissions:
   contents: read
@@ -31,6 +36,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate and generate service registry
+        run: |
+          npm ci --prefix monitoring --ignore-scripts --no-audit --no-fund
+          npm test --prefix monitoring
+          npm run generate --prefix monitoring
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -45,14 +60,24 @@ jobs:
           cache-to: type=gha,mode=max,scope=monitoring
 
   deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     name: Deploy Alloy on e2-micro
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate service configuration
+        run: |
+          npm ci --prefix monitoring --ignore-scripts --no-audit --no-fund
+          npm run generate --prefix monitoring
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -62,6 +87,9 @@ jobs:
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify existing private metrics access (read only)
+        run: node monitoring/verify-access.mjs
 
       - name: Configure Container Registry
         run: gcloud auth configure-docker gcr.io --quiet
@@ -77,13 +105,25 @@ jobs:
           docker push "${SHA_IMAGE}"
           docker push "${LATEST_IMAGE}"
 
+      - name: Verify collector is running this registry revision
+        env:
+          GRAFANA_RENDER_TOKEN: ${{ secrets.GRAFANA_RENDER_TOKEN }}
+        run: node monitoring/verify-deployment.mjs
+
+      - name: Reconcile registry-managed Grafana panels
+        env:
+          GRAFANA_RENDER_TOKEN: ${{ secrets.GRAFANA_RENDER_TOKEN }}
+          GRAFANA_DASHBOARD_BACKUP: ${{ runner.temp }}/grafana-before.json
+        run: node monitoring/sync-dashboard.mjs --apply
+
       - name: Verify production metrics after self-update
         run: |
+          EXPECTED="$(jq 'length' monitoring/public-catalog.json)"
           for attempt in $(seq 1 24); do
             PAYLOAD="$(curl --fail --silent --show-error --max-time 30 \
               "https://www.yuqi.site/api/metrics" || true)"
-            if echo "${PAYLOAD}" | jq -e \
-              '.summary.total >= 13 and .summary.down == 0 and .summary.unknown == 0 and .stale != true' >/dev/null 2>&1; then
+            if echo "${PAYLOAD}" | jq -e --argjson expected "${EXPECTED}" \
+              '.summary.total == $expected and .summary.down == 0 and .summary.unknown == 0 and .stale != true' >/dev/null 2>&1; then
               echo "${PAYLOAD}" | jq '{updatedAt, summary}'
               exit 0
             fi

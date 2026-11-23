@@ -1,0 +1,12 @@
+{
+  "project": "portfolio-notify-prod",
+  "region": "us-central1",
+  "collector": "portfolio-metrics-scraper@portfolio-notify-prod.iam.gserviceaccount.com",
+  "audience": "https://portfolio-metrics.internal",
+  "services": {
+    "portfolio-search-indexer": "https://portfolio-search-indexer-702193211434.us-central1.run.app/actuator/prometheus",
+    "portfolio-rag-indexer": "https://portfolio-rag-indexer-702193211434.us-central1.run.app/actuator/prometheus",
+    "portfolio-application-copilot": "https://portfolio-application-copilot-y45c2mnbja-uc.a.run.app/actuator/prometheus",
+    "portfolio-media-service": "https://portfolio-media-service-y45c2mnbja-uc.a.run.app/actuator/prometheus"
+  }
+}

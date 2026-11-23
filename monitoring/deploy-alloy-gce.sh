@@ -10,7 +10,7 @@ SERVICE_ACCOUNT="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 TOKEN_SECRET="${GRAFANA_TOKEN_SECRET:-GRAFANA_CLOUD_WRITE_TOKEN}"
 IMAGE="${ALLOY_IMAGE:-gcr.io/${PROJECT_ID}/portfolio-metrics-scraper:latest}"
 CUSTOM_AUDIENCE="${CLOUD_RUN_METRICS_AUDIENCE:-https://portfolio-metrics.internal}"
-BOOTSTRAP_IAM="${BOOTSTRAP_IAM:-true}"
+BOOTSTRAP_IAM="${BOOTSTRAP_IAM:-false}"
 SKIP_IMAGE_BUILD="${SKIP_IMAGE_BUILD:-false}"
 FIREWALL_TAG="portfolio-metrics-no-ingress"
 FIREWALL_RULE="portfolio-metrics-scraper-deny-ingress"
@@ -61,22 +61,10 @@ elif ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" \
   exit 1
 fi
 
-for service in portfolio-search-indexer portfolio-rag-indexer portfolio-application-copilot portfolio-media-service; do
-  if ! gcloud run services describe "${service}" \
-    --project="${PROJECT_ID}" \
-    --region="${REGION}" \
-    --format=json | grep -Fq "\"${CUSTOM_AUDIENCE}\""; then
-    gcloud run services update "${service}" \
-      --project="${PROJECT_ID}" \
-      --region="${REGION}" \
-      --add-custom-audiences="${CUSTOM_AUDIENCE}" >/dev/null
-  fi
-  gcloud run services add-iam-policy-binding "${service}" \
-    --project="${PROJECT_ID}" \
-    --region="${REGION}" \
-    --member="serviceAccount:${SERVICE_ACCOUNT}" \
-    --role="roles/run.invoker" >/dev/null
-done
+# Registry edits never grant service access, including during collector bootstrap.
+npm ci --prefix "${SCRIPT_DIR}" --ignore-scripts --no-audit --no-fund
+node "${SCRIPT_DIR}/generate.mjs"
+node "${SCRIPT_DIR}/verify-access.mjs"
 
 if [[ "${SKIP_IMAGE_BUILD}" != "true" ]]; then
   gcloud builds submit "${SCRIPT_DIR}/alloy" \
@@ -119,6 +107,11 @@ if gcloud compute instances describe "${INSTANCE_NAME}" \
     --quiet >/dev/null
   echo "Updated and restarted ${INSTANCE_NAME} in ${ZONE}."
   exit 0
+fi
+
+if [[ "${BOOTSTRAP_IAM}" != "true" ]]; then
+  echo "Missing collector instance; provisioning requires explicit bootstrap approval."
+  exit 1
 fi
 
 gcloud compute instances create "${INSTANCE_NAME}" \

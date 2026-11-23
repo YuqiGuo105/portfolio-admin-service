@@ -1,6 +1,4 @@
-// Grafana Alloy — scrapes all Portfolio Platform Cloud Run services
-// and pushes metrics to Grafana Cloud (loyalcaravan951).
-
+// Generated from monitoring/services.yaml. Do not edit by hand.
 prometheus.remote_write "grafana_cloud" {
   endpoint {
     url = sys.env("GRAFANA_PROMETHEUS_URL")
@@ -11,87 +9,63 @@ prometheus.remote_write "grafana_cloud" {
   }
 }
 
-prometheus.scrape "portfolio_services" {
-  targets = [
-    {"__address__" = "portfolio-notification-service-702193211434.us-central1.run.app", "job" = "portfolio-notification-service"},
-    {"__address__" = "portfolio-admin-service-702193211434.us-central1.run.app", "job" = "portfolio-admin-service"},
-    {"__address__" = "portfolio-agent-service-702193211434.us-central1.run.app", "job" = "portfolio-agent-service"},
-    {"__address__" = "portfolio-mcp-gateway-702193211434.us-central1.run.app", "job" = "portfolio-mcp-gateway"},
-    {"__address__" = "knowledge-service-702193211434.us-central1.run.app", "job" = "knowledge-service"},
-    {"__address__" = "portfolio-analytics-aggregator-702193211434.us-central1.run.app", "job" = "analytics-aggregator-service"},
-    {"__address__" = "portfolio-analytics-alerts-702193211434.us-central1.run.app", "job" = "analytics-alerts-service"},
-  ]
-
-  scheme       = "https"
+prometheus.scrape "portfolio_admin_service" {
+  targets = [{"__address__" = "portfolio-admin-service-702193211434.us-central1.run.app", "job" = "portfolio-admin-service"}]
+  scheme = "https"
   metrics_path = "/actuator/prometheus"
   scrape_interval = "60s"
-  scrape_timeout  = "15s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
 
+prometheus.scrape "portfolio_notification_service" {
+  targets = [{"__address__" = "portfolio-notification-service-702193211434.us-central1.run.app", "job" = "portfolio-notification-service"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "portfolio_agent_service" {
+  targets = [{"__address__" = "portfolio-agent-service-702193211434.us-central1.run.app", "job" = "portfolio-agent-service"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "portfolio_mcp_gateway" {
+  targets = [{"__address__" = "portfolio-mcp-gateway-702193211434.us-central1.run.app", "job" = "portfolio-mcp-gateway"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "knowledge_service" {
+  targets = [{"__address__" = "knowledge-service-702193211434.us-central1.run.app", "job" = "knowledge-service"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout = "15s"
+  follow_redirects = false
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]
 }
 
 prometheus.scrape "portfolio_search_indexer" {
-  targets = [
-    {"__address__" = "portfolio-search-indexer-702193211434.us-central1.run.app", "job" = "portfolio-search-indexer"},
-  ]
-
-  scheme          = "https"
-  metrics_path    = "/actuator/prometheus"
-  scrape_interval = "60s"
-  scrape_timeout  = "15s"
-
-  authorization {
-    type             = "Bearer"
-    credentials_file = "/var/run/cloud-run-identity/token"
-  }
-
-  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
-}
-
-prometheus.scrape "portfolio_rag_indexer" {
-  targets = [
-    {"__address__" = "portfolio-rag-indexer-702193211434.us-central1.run.app", "job" = "portfolio-rag-indexer"},
-  ]
-
-  scheme          = "https"
-  metrics_path    = "/actuator/prometheus"
-  scrape_interval = "60s"
-  scrape_timeout  = "15s"
-
-  authorization {
-    type             = "Bearer"
-    credentials_file = "/var/run/cloud-run-identity/token"
-  }
-
-  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
-}
-
-// Career metrics stay behind Cloud Run IAM, like the private indexers.
-prometheus.scrape "portfolio_career" {
-  targets = [
-    {"__address__" = "portfolio-application-copilot-y45c2mnbja-uc.a.run.app", "job" = "portfolio-application-copilot"},
-  ]
-
-  scheme          = "https"
-  metrics_path    = "/actuator/prometheus"
-  scrape_interval = "60s"
-  scrape_timeout  = "15s"
-
-  authorization {
-    type             = "Bearer"
-    credentials_file = "/var/run/cloud-run-identity/token"
-  }
-
-  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
-}
-
-// Private Media metrics use the existing collector identity, never a public token.
-prometheus.scrape "portfolio_media" {
-  targets = [{"__address__" = "portfolio-media-service-y45c2mnbja-uc.a.run.app", "job" = "portfolio-media-service"}]
+  targets = [{"__address__" = "portfolio-search-indexer-702193211434.us-central1.run.app", "job" = "portfolio-search-indexer"}]
   scheme = "https"
   metrics_path = "/actuator/prometheus"
-  scrape_interval = "120s"
+  scrape_interval = "60s"
   scrape_timeout = "15s"
+  follow_redirects = false
   authorization {
     type = "Bearer"
     credentials_file = "/var/run/cloud-run-identity/token"
@@ -99,59 +73,172 @@ prometheus.scrape "portfolio_media" {
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]
 }
 
-// Health endpoints do not invoke AI, tools, or media jobs. Validate JSON bodies
-// so an HTTP 200 login/error page cannot be mistaken for a healthy service.
-prometheus.exporter.blackbox "portfolio_node" {
+prometheus.scrape "portfolio_rag_indexer" {
+  targets = [{"__address__" = "portfolio-rag-indexer-702193211434.us-central1.run.app", "job" = "portfolio-rag-indexer"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  authorization {
+    type = "Bearer"
+    credentials_file = "/var/run/cloud-run-identity/token"
+  }
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "analytics_aggregator_service" {
+  targets = [{"__address__" = "portfolio-analytics-aggregator-702193211434.us-central1.run.app", "job" = "analytics-aggregator-service"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "analytics_alerts_service" {
+  targets = [{"__address__" = "portfolio-analytics-alerts-702193211434.us-central1.run.app", "job" = "analytics-alerts-service"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "portfolio_application_copilot" {
+  targets = [{"__address__" = "portfolio-application-copilot-y45c2mnbja-uc.a.run.app", "job" = "portfolio-application-copilot"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "60s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  authorization {
+    type = "Bearer"
+    credentials_file = "/var/run/cloud-run-identity/token"
+  }
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "portfolio_media_service" {
+  targets = [{"__address__" = "portfolio-media-service-y45c2mnbja-uc.a.run.app", "job" = "portfolio-media-service"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "120s"
+  scrape_timeout = "15s"
+  follow_redirects = false
+  authorization {
+    type = "Bearer"
+    credentials_file = "/var/run/cloud-run-identity/token"
+  }
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.exporter.blackbox "portfolio_voice_relay" {
   config = `modules:
-  voice_health:
+  health:
     prober: http
     timeout: 8s
     http:
       valid_status_codes: [200]
       follow_redirects: false
       preferred_ip_protocol: ip4
-      fail_if_body_not_matches_regexp: ['"ok"\s*:\s*true']
-  mcp_health:
-    prober: http
-    timeout: 8s
-    http:
-      valid_status_codes: [200]
-      follow_redirects: false
-      preferred_ip_protocol: ip4
-      fail_if_body_not_matches_regexp: ['"status"\s*:\s*"ok"', '"server"\s*:\s*"yuqi-portfolio-mcp"']
+      fail_if_body_not_matches_regexp: ["\"ok\"\\s*:\\s*true"]
 `
   target {
     name = "portfolio-voice-relay"
     address = "https://portfolio-voice-relay-y45c2mnbja-uc.a.run.app/health"
-    module = "voice_health"
-  }
-  target {
-    name = "portfolio-mcp-server"
-    address = "https://portfolio-mcp-server-y45c2mnbja-uc.a.run.app/health"
-    module = "mcp_health"
+    module = "health"
   }
 }
-
-prometheus.scrape "portfolio_node_health" {
-  targets = prometheus.exporter.blackbox.portfolio_node.targets
+prometheus.scrape "portfolio_voice_relay" {
+  targets = prometheus.exporter.blackbox.portfolio_voice_relay.targets
   scrape_interval = "120s"
   scrape_timeout = "10s"
-  forward_to = [prometheus.relabel.portfolio_node.receiver]
+  forward_to = [prometheus.relabel.portfolio_voice_relay.receiver]
 }
-
-// Keep only bounded health series, not per-target TLS/DNS label sets.
-prometheus.relabel "portfolio_node" {
+prometheus.relabel "portfolio_voice_relay" {
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]
   rule {
     source_labels = ["job"]
-    regex = "integrations/blackbox/(portfolio-voice-relay|portfolio-mcp-server)"
+    regex = "integrations/blackbox/portfolio-voice-relay"
     target_label = "job"
-    replacement = "$1"
+    replacement = "portfolio-voice-relay"
   }
   rule {
     source_labels = ["__name__"]
     regex = "up|probe_success|probe_duration_seconds|probe_http_status_code"
     action = "keep"
+  }
+}
+
+prometheus.exporter.blackbox "portfolio_mcp_server" {
+  config = `modules:
+  health:
+    prober: http
+    timeout: 8s
+    http:
+      valid_status_codes: [200]
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      fail_if_body_not_matches_regexp: ["\"status\"\\s*:\\s*\"ok\"","\"server\"\\s*:\\s*\"yuqi-portfolio-mcp\""]
+`
+  target {
+    name = "portfolio-mcp-server"
+    address = "https://portfolio-mcp-server-y45c2mnbja-uc.a.run.app/health"
+    module = "health"
+  }
+}
+prometheus.scrape "portfolio_mcp_server" {
+  targets = prometheus.exporter.blackbox.portfolio_mcp_server.targets
+  scrape_interval = "120s"
+  scrape_timeout = "10s"
+  forward_to = [prometheus.relabel.portfolio_mcp_server.receiver]
+}
+prometheus.relabel "portfolio_mcp_server" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  rule {
+    source_labels = ["job"]
+    regex = "integrations/blackbox/portfolio-mcp-server"
+    target_label = "job"
+    replacement = "portfolio-mcp-server"
+  }
+  rule {
+    source_labels = ["__name__"]
+    regex = "up|probe_success|probe_duration_seconds|probe_http_status_code"
+    action = "keep"
+  }
+}
+
+prometheus.exporter.self "registry" {}
+prometheus.scrape "registry" {
+  targets = prometheus.exporter.self.registry.targets
+  scrape_interval = "120s"
+  forward_to = [prometheus.relabel.registry.receiver]
+}
+prometheus.relabel "registry" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  rule {
+    source_labels = ["__name__"]
+    regex = "up"
+    action = "keep"
+  }
+  rule {
+    target_label = "__name__"
+    replacement = "portfolio_monitoring_registry_info"
+  }
+  rule {
+    target_label = "job"
+    replacement = "portfolio-monitoring-registry"
+  }
+  rule {
+    target_label = "instance"
+    replacement = "collector"
+  }
+  rule {
+    target_label = "revision"
+    replacement = "ec87968af1c85cd5"
   }
 }
 
