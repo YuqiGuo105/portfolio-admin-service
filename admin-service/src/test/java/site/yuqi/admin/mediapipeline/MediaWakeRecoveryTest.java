@@ -72,7 +72,7 @@ class MediaWakeRecoveryTest {
         when(wake.wakeAndAwait(asset)).thenReturn(false,true);
         var config=new Binder(new MapConfigurationPropertySource(Map.of()))
                 .bindOrCreate("portfolio.media-pipeline",MediaPipelineProperties.class);
-        try(var ignored=new AutoCloseableDispatcher(new MediaWakeDispatcher(store,wake,config))) {
+        try(var ignored=new AutoCloseableDispatcher(new MediaWakeDispatcher(store,wake,config,org.mockito.Mockito.mock(MediaPresentationJobs.class)))) {
             assertThat(ignored.dispatcher.drainAndAwait()).containsEntry("PENDING",1);
             due();
             assertThat(ignored.dispatcher.drainAndAwait()).containsEntry("DONE",1);

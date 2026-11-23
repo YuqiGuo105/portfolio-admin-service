@@ -46,6 +46,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.*;
 
 /** Opt-in only: real HTTP, S3 protocol, Kafka, PostgreSQL, FFmpeg, libvips and frontend upload code. */
 @EnabledIfEnvironmentVariable(named=MediaTestSchema.ENV,matches=MediaTestSchema.LOCAL_ONLY)
@@ -155,17 +157,27 @@ class MediaHttpEndToEndTest {
                 var store=new MediaAssetStore(db.jdbc);
                 var relay=new MediaOutboxRelay(store,transport,mapper,config);
                 var wake=new MediaServiceWakeClient(config,new CloudRunIdentityTokenProvider(mapper,"http://127.0.0.1:9/unused"));
-                var dispatcher=new MediaWakeDispatcher(new MediaWakeStore(db.jdbc),wake,config);
                 var uploads=new MediaUploadService(store,new OriginalsStore(config),config,relay,db.transactions,mapper);
                 var presentations=new MediaPresentationService(db.jdbc,new MediaArticlePolicy(store),
                         mock(site.yuqi.admin.service.AuditLogService.class),mapper,db.transactions);
                 var management=new MediaManagementService(store,uploads,
                         mock(site.yuqi.admin.service.AuditLogService.class),db.transactions);
+                var users=mock(AdminUserService.class);
+                var verifier=mock(SupabaseTokenVerifier.class);
+                String browserToken=UUID.randomUUID().toString();
+                when(verifier.isConfigured()).thenReturn(true);
+                when(verifier.verify(browserToken)).thenReturn(Map.of("email","admin@example.test"));
+                when(users.authorize(eq("admin@example.test"),anyList())).thenReturn(AdminUserService.Authorization.allowed(
+                        site.yuqi.admin.domain.AdminUserRole.ADMIN,"local-test",false));
+                var presentationJobs=new MediaPresentationJobs(db.jdbc,uploads,store,presentations,users,
+                        mock(site.yuqi.admin.service.AuditLogService.class),db.transactions,"");
+                var dispatcher=new MediaWakeDispatcher(new MediaWakeStore(db.jdbc),wake,config,presentationJobs);
                 try(var admin=web(new MediaAdminController(uploads,management),
                         new MediaPresentationController(presentations),
+                        new MediaPresentationJobsController(presentationJobs),
                         new MediaRecoveryController(relay,dispatcher,recoveryToken),
                         new InternalTokenFilter(internalToken),
-                        new AdminAuthFilter(adminSecret,mock(SupabaseTokenVerifier.class),"",mock(AdminUserService.class)))) {
+                        new AdminAuthFilter(adminSecret,verifier,"",users))) {
                     var http=HttpClient.newHttpClient();
                     assertThat(http.send(HttpRequest.newBuilder(URI.create(url(admin)+"/api/admin/media")).build(),HttpResponse.BodyHandlers.discarding()).statusCode()).isEqualTo(401);
                     assertThat(http.send(HttpRequest.newBuilder(URI.create(url(admin)+"/api/internal/media/recover")).POST(HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.discarding()).statusCode()).isEqualTo(401);
@@ -176,13 +188,14 @@ class MediaHttpEndToEndTest {
                     try {
                         ProcessBuilder client=new ProcessBuilder("node",frontend.resolve("scripts/media-local-e2e.mjs").toString());
                         client.environment().putAll(Map.of("MEDIA_E2E_ADMIN_URL",url(admin),"MEDIA_E2E_ADMIN_SECRET",adminSecret,
-                                "MEDIA_E2E_OUTPUT",output.toString()));
+                                "MEDIA_E2E_OUTPUT",output.toString(),"MEDIA_E2E_BROWSER_TOKEN",browserToken));
                         Process upload=client.redirectErrorStream(true).redirectOutput(output.resolve("upload.log").toFile()).start();
                         try { assertThat(upload.waitFor(catalog == null ? 270 : 1500,TimeUnit.SECONDS)).isTrue(); assertThat(upload.exitValue()).isZero(); }
                         finally { if(upload.isAlive()) upload.destroyForcibly(); }
                         assertThat(wakesReceived.get()).isGreaterThanOrEqualTo(assetCount + 1);
                         assertThat(received.get()).isEqualTo(assetCount);
                         assertThat(db.count("select count(*) from media_public")).isEqualTo(assetCount);
+                        assertThat(db.count("select count(*) from media_presentation_jobs where status='SUCCEEDED'")).isEqualTo(1);
                         // The same processed asset can be published to the homepage without a separate MP4 upload.
                         UUID videoId=UUID.fromString(db.text("select id::text from media_assets where kind='VIDEO' and status='READY' limit 1"));
                         String placementUrl=url(admin)+"/api/admin/media/presentations/yuqi-intro";

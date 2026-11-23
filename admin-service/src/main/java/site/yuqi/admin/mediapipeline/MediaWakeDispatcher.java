@@ -19,19 +19,22 @@ public class MediaWakeDispatcher {
     private static final Logger log = LoggerFactory.getLogger(MediaWakeDispatcher.class);
     private final MediaWakeStore store;
     private final MediaServiceWakeClient wake;
+    private final MediaPresentationJobs presentations;
     private final int maxAttempts;
     private final ExecutorService workers = Executors.newFixedThreadPool(2, task -> {
         Thread thread = new Thread(task,"media-wake"); thread.setDaemon(true); return thread;
     });
     private CompletableFuture<Void> inFlight = CompletableFuture.completedFuture(null);
 
-    public MediaWakeDispatcher(MediaWakeStore store, MediaServiceWakeClient wake, MediaPipelineProperties config) {
+    public MediaWakeDispatcher(MediaWakeStore store, MediaServiceWakeClient wake, MediaPipelineProperties config,
+                               MediaPresentationJobs presentations) {
         this.store=store; this.wake=wake; this.maxAttempts=Math.max(1,config.events().maxAttempts());
+        this.presentations=presentations;
     }
 
     private synchronized CompletableFuture<Void> startBatch() {
         if (!inFlight.isDone()) return inFlight;
-        if (!wake.isConfigured()) return CompletableFuture.completedFuture(null);
+        if (!wake.isConfigured()) { presentations.reconcile(); return CompletableFuture.completedFuture(null); }
         var deliveries=store.claim(2, (int)(wake.waitMillis()/1000)+60, maxAttempts);
         inFlight=CompletableFuture.allOf(deliveries.stream().map(delivery -> CompletableFuture.runAsync(() -> {
             boolean done=wake.wakeAndAwait(delivery.assetId());
@@ -39,7 +42,7 @@ public class MediaWakeDispatcher {
             if (!done && delivery.attempt() >= maxAttempts) {
                 log.error("Media wake exhausted retries for asset {}; inspect wake DLQ",delivery.assetId());
             }
-        },workers)).toArray(CompletableFuture[]::new));
+        },workers)).toArray(CompletableFuture[]::new)).thenRun(presentations::reconcile);
         return inFlight;
     }
 
