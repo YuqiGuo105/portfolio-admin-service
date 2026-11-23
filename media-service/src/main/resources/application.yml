@@ -1,0 +1,93 @@
+server:
+  port: ${PORT:8084}
+  shutdown: graceful
+
+spring:
+  application:
+    name: portfolio-media-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/postgres}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:6}
+      minimum-idle: 0
+      connection-timeout: 10000
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:PLAIN}
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG:}
+      ssl.truststore.type: ${KAFKA_TRUSTSTORE_TYPE:PEM}
+      ssl.truststore.certificates: ${KAFKA_CA_CERT:}
+    consumer:
+      # Its own group: it reads the shared topic alongside the search indexer, not instead of it.
+      group-id: ${KAFKA_CONSUMER_GROUP:media-service-group}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    listener:
+      ack-mode: MANUAL_IMMEDIATE
+      missing-topics-fatal: false
+
+portfolio:
+  media-pipeline:
+    # The encoding profile this build implements. Outputs are stored under it.
+    profile-version: v1
+    internal-token: ${INTERNAL_API_TOKEN:}
+    storage:
+      # Any S3-compatible endpoint: https://storage.googleapis.com (HMAC keys), an R2 account
+      # endpoint, s3.<region>.amazonaws.com, or a local stand-in.
+      endpoint: ${MEDIA_S3_ENDPOINT:http://127.0.0.1:9000}
+      region: ${MEDIA_S3_REGION:auto}
+      access-key: ${MEDIA_S3_ACCESS_KEY:}
+      secret-key: ${MEDIA_S3_SECRET_KEY:}
+      originals-bucket: ${MEDIA_ORIGINALS_BUCKET:portfolio-media-originals}
+      public-bucket: ${MEDIA_PUBLIC_BUCKET:portfolio-media-public}
+    worker:
+      enabled: ${MEDIA_WORKER_ENABLED:true}
+      concurrency: ${MEDIA_WORKER_CONCURRENCY:2}
+      lease-seconds: ${MEDIA_WORKER_LEASE_SECONDS:120}
+      poll-interval-ms: ${MEDIA_WORKER_POLL_MS:2000}
+      # Empty = a fresh temporary directory per process. Never point two instances at the same one.
+      work-dir: ${MEDIA_WORK_DIR:}
+      source-cache-bytes: ${MEDIA_SOURCE_CACHE_BYTES:2147483648}
+    tools:
+      ffmpeg: ${MEDIA_FFMPEG:ffmpeg}
+      ffprobe: ${MEDIA_FFPROBE:ffprobe}
+      vips: ${MEDIA_VIPS:vips}
+      vipsheader: ${MEDIA_VIPSHEADER:vipsheader}
+      x264-preset: ${MEDIA_X264_PRESET:veryfast}
+      job-timeout-seconds: ${MEDIA_JOB_TIMEOUT_SECONDS:3600}
+    limits:
+      max-video-seconds: ${MEDIA_MAX_VIDEO_SECONDS:1800}
+      max-video-short-side: ${MEDIA_MAX_VIDEO_SHORT_SIDE:4320}
+      max-image-pixels: ${MEDIA_MAX_IMAGE_PIXELS:120000000}
+      loop-max-seconds: ${MEDIA_LOOP_MAX_SECONDS:15}
+    kafka:
+      enabled: ${MEDIA_KAFKA_ENABLED:true}
+      # An existing topic, shared with the search indexer. Media events carry jobType=MEDIA_PROCESS.
+      topic: ${KAFKA_TOPIC_SEARCH_INDEX:content.search.index.v1}
+    http-intake:
+      enabled: ${MEDIA_HTTP_INTAKE_ENABLED:false}
+    recovery:
+      unplanned-after-seconds: ${MEDIA_UNPLANNED_AFTER_SECONDS:60}
+      lease-sweep-ms: ${MEDIA_LEASE_SWEEP_MS:15000}
+      reconcile-ms: ${MEDIA_RECONCILE_MS:30000}
+      initial-delay-ms: ${MEDIA_RECOVERY_INITIAL_DELAY_MS:10000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: portfolio-media-service
+
+logging:
+  level:
+    site.yuqi.media: INFO

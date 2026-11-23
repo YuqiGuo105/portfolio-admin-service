@@ -1,0 +1,189 @@
+package site.yuqi.admin.mediapipeline;
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * The originals bucket, as far as the upload API needs it: open a multipart upload, hand out one
+ * signed URL per part, and close the upload once every part is there.
+ *
+ * <p>The browser sends the bytes straight to the bucket with those URLs. This service never sees
+ * them, so a 1 GB video costs it a few small requests.
+ */
+@Component
+@ConditionalOnProperty(name = "portfolio.media-pipeline.enabled", havingValue = "true")
+public class OriginalsStore {
+
+    public record Part(int number, String etag, long size) {
+    }
+
+    public record StoredObject(long size, String etag) {
+    }
+
+    private static final Pattern UPLOAD_ID = Pattern.compile("<UploadId>([^<]+)</UploadId>");
+    private static final Pattern PART = Pattern.compile(
+            "<Part>.*?<PartNumber>(\\d+)</PartNumber>.*?</Part>", Pattern.DOTALL);
+    private static final Pattern ETAG = Pattern.compile("<ETag>([^<]+)</ETag>");
+    private static final Pattern SIZE = Pattern.compile("<Size>(\\d+)</Size>");
+    private static final Pattern TRUNCATED = Pattern.compile("<IsTruncated>true</IsTruncated>");
+    private static final Pattern NEXT_MARKER = Pattern.compile("<NextPartNumberMarker>(\\d+)</NextPartNumberMarker>");
+
+    private final HttpClient http = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+    private final URI endpoint;
+    private final String bucket;
+    private final S3Signer signer;
+
+    public OriginalsStore(MediaPipelineProperties properties) {
+        MediaPipelineProperties.Storage storage = properties.storage();
+        this.endpoint = URI.create(storage.endpoint().replaceAll("/+$", ""));
+        this.bucket = storage.originalsBucket();
+        this.signer = new S3Signer(storage.accessKey(), storage.secretKey(), storage.region());
+    }
+
+    /** Opens a multipart upload and returns the store's id for it. */
+    public String createMultipartUpload(String key, String contentType) throws IOException {
+        HttpResponse<String> response = send("POST", key, Map.of("uploads", ""),
+                Map.of("Content-Type", contentType), "");
+        Matcher id = UPLOAD_ID.matcher(requireSuccess(response, "create upload", key));
+        if (!id.find()) throw new IOException("the object store returned no upload id for " + key);
+        return unescape(id.group(1));
+    }
+
+    /** A URL the browser can PUT exactly one part to, valid for {@code ttl}. */
+    public URI presignPart(String key, String storageUploadId, int partNumber, Duration ttl) {
+        Map<String, String> query = new LinkedHashMap<>();
+        query.put("partNumber", Integer.toString(partNumber));
+        query.put("uploadId", storageUploadId);
+        return signer.presign("PUT", endpoint, path(key), query, ttl, Instant.now());
+    }
+
+    /**
+     * The parts the store actually holds. This list, not the browser's word, decides completion.
+     * Empty when nothing was uploaded, and also when the store no longer knows the upload id.
+     */
+    public List<Part> listParts(String key, String storageUploadId) throws IOException {
+        List<Part> parts = new ArrayList<>();
+        String marker = null;
+        do {
+            Map<String, String> query = new LinkedHashMap<>();
+            query.put("uploadId", storageUploadId);
+            if (marker != null) query.put("part-number-marker", marker);
+            HttpResponse<String> response = send("GET", key, query, Map.of(), "");
+            // The store forgets an upload id once the upload is completed or aborted.
+            if (response.statusCode() == 404) return List.of();
+            String body = requireSuccess(response, "list parts", key);
+            Matcher part = PART.matcher(body);
+            while (part.find()) {
+                Matcher etag = ETAG.matcher(part.group());
+                Matcher size = SIZE.matcher(part.group());
+                parts.add(new Part(Integer.parseInt(part.group(1)),
+                        etag.find() ? unescape(etag.group(1)) : "", size.find() ? Long.parseLong(size.group(1)) : 0));
+            }
+            Matcher next = NEXT_MARKER.matcher(body);
+            marker = TRUNCATED.matcher(body).find() && next.find() ? next.group(1) : null;
+        } while (marker != null);
+        return parts;
+    }
+
+    /** Joins the parts into the final object. False when the upload id is no longer known to the store. */
+    public boolean completeMultipartUpload(String key, String storageUploadId, List<Part> parts) throws IOException {
+        StringBuilder xml = new StringBuilder("<CompleteMultipartUpload>");
+        for (Part part : parts) {
+            xml.append("<Part><PartNumber>").append(part.number()).append("</PartNumber><ETag>")
+                    .append(escape(part.etag())).append("</ETag></Part>");
+        }
+        xml.append("</CompleteMultipartUpload>");
+        HttpResponse<String> response = send("POST", key, Map.of("uploadId", storageUploadId),
+                Map.of("Content-Type", "application/xml"), xml.toString());
+        if (response.statusCode() == 404 || response.body().contains("<Code>NoSuchUpload</Code>")) return false;
+        String body = requireSuccess(response, "complete upload", key);
+        // S3 can answer 200 and still report a failure in the body.
+        if (body.contains("<Error>")) throw new IOException("complete upload failed for " + key + ": " + brief(body));
+        return true;
+    }
+
+    public void abortMultipartUpload(String key, String storageUploadId) throws IOException {
+        HttpResponse<String> response = send("DELETE", key, Map.of("uploadId", storageUploadId), Map.of(), "");
+        if (response.statusCode() != 404) requireSuccess(response, "abort upload", key);
+    }
+
+    public Optional<StoredObject> head(String key) throws IOException {
+        HttpResponse<String> response = send("HEAD", key, Map.of(), Map.of(), "");
+        if (response.statusCode() == 404) return Optional.empty();
+        requireSuccess(response, "head", key);
+        return Optional.of(new StoredObject(
+                response.headers().firstValueAsLong("Content-Length").orElse(-1),
+                response.headers().firstValue("ETag").orElse("").replace("\"", "")));
+    }
+
+    private HttpResponse<String> send(String method, String key, Map<String, String> query,
+                                      Map<String, String> headers, String body) throws IOException {
+        String path = path(key);
+        StringBuilder url = new StringBuilder(S3Signer.origin(endpoint)).append(S3Signer.encodePath(path));
+        char separator = '?';
+        for (Map.Entry<String, String> parameter : query.entrySet()) {
+            url.append(separator).append(S3Signer.encode(parameter.getKey())).append('=')
+                    .append(S3Signer.encode(parameter.getValue()));
+            separator = '&';
+        }
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url.toString()))
+                .timeout(Duration.ofSeconds(60))
+                .method(method, body.isEmpty()
+                        ? HttpRequest.BodyPublishers.noBody()
+                        : HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+        headers.forEach(request::header);
+        signer.sign(method, endpoint, path, query, Map.of(), S3Signer.sha256Hex(body), Instant.now())
+                .forEach(request::header);
+        try {
+            return http.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted during " + method + " " + path, interrupted);
+        }
+    }
+
+    private String path(String key) {
+        return "/" + bucket + "/" + key;
+    }
+
+    private static String requireSuccess(HttpResponse<String> response, String action, String key) throws IOException {
+        if (response.statusCode() / 100 != 2) {
+            throw new IOException(action + " failed for " + key + ": HTTP " + response.statusCode() + " "
+                    + brief(response.body()));
+        }
+        return response.body() == null ? "" : response.body();
+    }
+
+    private static String brief(String body) {
+        String text = body == null ? "" : body.strip();
+        return text.length() > 300 ? text.substring(0, 300) : text;
+    }
+
+    private static String escape(String value) {
+        return value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static String unescape(String value) {
+        return value.replace("&quot;", "\"").replace("&#34;", "\"").replace("&lt;", "<").replace("&gt;", ">")
+                .replace("&amp;", "&");
+    }
+}

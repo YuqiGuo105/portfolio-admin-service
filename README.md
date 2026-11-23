@@ -69,6 +69,7 @@ republished when the broker or indexers recover.
 | `admin-service/`               | 8081 | `us-central1-docker.pkg.dev/portfolio-notify-prod/portfolio/portfolio-admin-service` |
 | `search-indexer/`              | 8082 | `…/portfolio-search-indexer`                                                       |
 | `rag-indexer/`                 | 8083 | `…/portfolio-rag-indexer`                                                          |
+| `media-service/`               | 8084 | not deployed yet: image builds in CI, no deploy workflow                           |
 
 All three services are built from this monorepo by their own GitHub Actions
 workflow under `.github/workflows/deploy-*.yml`. Each builds only its
@@ -101,6 +102,79 @@ module via `mvn -pl <module> -am package` and pushes its own image.
     ├── deploy-search-indexer.yml
     └── deploy-rag-indexer.yml
 ```
+
+---
+
+## Media pipeline (images and video)
+
+Upload an original once; visitors get adaptive video (HLS at 360p, 720p and 1080p) and images in
+AVIF and WebP at six widths. It follows the classic upload → queue → transcode → publish design.
+Everything is off until `MEDIA_PIPELINE_ENABLED=true`.
+
+Two services take part. The upload API is part of `admin-service`. `media-service` is the one
+new service: it hears that an upload is complete, plans the work, runs FFmpeg and libvips, checks
+the result and publishes it. They share nothing but the database tables below, one Kafka topic and
+one wake-up call.
+
+| Step | What happens | Where |
+|------|--------------|-------|
+| 1 | Browser asks to upload; gets one signed URL per part | `POST /api/admin/media/uploads` · `MediaUploadService.start` |
+| 2 | Browser PUTs the parts straight to the originals bucket, then confirms | `POST /api/admin/media/{id}/upload-complete` |
+| 3 | Source bound, status `PROCESSING` and one outbox row, in one transaction; a relay delivers the row to Kafka | `MediaAssetStore.bindSource` · `MediaOutboxRelay` |
+| 4 | Media Service records a `PLAN` job, then acknowledges the offset; the plan probes the file and creates one job per output | `WorkIntake` · `PlanHandler` |
+| 5 | Workers lease jobs, renew the lease while FFmpeg runs | `JobRunner` · `MediaRepository.claimNext` |
+| 6 | Segments and playlists go under the attempt's own prefix | `VideoRenditionHandler` · `Outputs` |
+| 7 | Every reported file is checked in the bucket, the master playlist is written, then one UPDATE flips the asset to `READY` | `PublishHandler` · `MediaRepository.publish` |
+
+**No new Kafka topic.** The event is published on `content.search.index.v1` with
+`jobType=MEDIA_PROCESS`, `sourceType=MEDIA` and no `indexingJobId`. It uses the same envelope as
+`ContentIndexEvent` plus `sourceKey` and `profileVersion`. `media-service` reads the topic with its
+own consumer group (`media-service-group`) and ignores everything else; `search-indexer` skips
+media events. Poison records go to `indexing_kafka_quarantine` with `worker='MEDIA'`.
+
+**Tables** (`V11__media_pipeline.sql`): `media_assets` (one row per upload, and the publish
+pointer), `media_jobs` (leased units of work), `media_event_outbox`, and the view `media_public`,
+which is the only thing the public site reads.
+
+**Object keys.** Originals: `originals/{assetId}/{uploadId}/{file}` in a private bucket. Outputs:
+`media/{assetId}/{sourceVersion}/{profile}/a{attempt}/{rendition}/…` in a public bucket, plus
+`master-{hash}.m3u8`. Every key is written once and never changes, so outputs are served with
+`Cache-Control: public, max-age=31536000, immutable`.
+
+**What can go wrong, and what handles it**
+
+| Failure | Handling |
+|---------|----------|
+| Database updated, message not sent | Transactional outbox; the relay retries with backoff, parks as `DLQ` after 20 tries |
+| Message delivered twice | Unique key on `media_jobs(asset_id, source_version, profile_version, rendition)` |
+| Consumer dies before committing the offset | Offset is acknowledged only after the `PLAN` row is committed; the replay is a no-op |
+| Worker dies mid-transcode | Lease expires, the job becomes a new attempt; finished renditions are kept |
+| Old worker comes back | Each attempt writes under `a{attempt}/`; a result is accepted only from the attempt holding the lease |
+| Half-written output | Nothing public refers to the files until the final UPDATE; that UPDATE also checks the source version |
+| Lost message, crash between steps | `Recovery` sweeps: no `PLAN` after 60 s, all outputs done but no `PUBLISH`, a dead job with the asset still processing |
+| Upload never finished | `MediaUploadJanitor` aborts the multipart upload and closes the asset after 24 h |
+
+**To switch it on** (nothing below exists yet):
+
+1. One new Cloud Run service from `media-service/Dockerfile` (the image installs FFmpeg and
+   libvips). It is CPU-bound: 2 vCPU and 2 GiB is a sensible start.
+2. Two buckets on any S3-compatible store: a private one for originals with CORS allowing `PUT`
+   from the admin site, and a public one for outputs with CORS allowing `GET`.
+3. Environment: `MEDIA_PIPELINE_ENABLED`, `MEDIA_S3_*`, `MEDIA_ORIGINALS_BUCKET`,
+   `MEDIA_SERVICE_BASE_URL`, `MEDIA_SERVICE_INTERNAL_TOKEN` on `admin-service`; `MEDIA_S3_*`,
+   both bucket names, `INTERNAL_API_TOKEN`, the Kafka and datasource settings on `media-service`.
+4. The consumer group `media-service-group` needs read access to `content.search.index.v1`.
+
+The tables are created by Flyway the next time `admin-service` starts, whether or not the
+pipeline is enabled.
+
+**On one machine, without Kafka:** start `admin-service` with `MEDIA_EVENTS_TRANSPORT=http` and
+`media-service` with `MEDIA_KAFKA_ENABLED=false MEDIA_HTTP_INTAKE_ENABLED=true`. The same event
+then travels over HTTP; every other step is unchanged.
+
+**Tests.** `MEDIA_TEST_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/<name>_test mvn verify` runs the
+failure-rule tests against a real PostgreSQL, each class in its own throwaway schema. The
+end-to-end tests also need `ffmpeg` and `vips` on the `PATH` and are skipped without them.
 
 ---
 

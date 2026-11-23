@@ -9,6 +9,7 @@ COPY pom.xml                   ./pom.xml
 COPY admin-service/pom.xml     ./admin-service/pom.xml
 COPY search-indexer/pom.xml    ./search-indexer/pom.xml
 COPY rag-indexer/pom.xml       ./rag-indexer/pom.xml
+COPY media-service/pom.xml     ./media-service/pom.xml
 
 RUN mvn -B -q -DskipTests dependency:go-offline -pl rag-indexer -am
 

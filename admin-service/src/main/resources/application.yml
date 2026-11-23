@@ -101,6 +101,41 @@ portfolio:
     max-cover-bytes: ${CONTENT_COVER_MAX_BYTES:5242880}
     download-timeout-seconds: ${CONTENT_COVER_DOWNLOAD_TIMEOUT_SECONDS:10}
     allowed-source-hosts: ${CONTENT_COVER_ALLOWED_SOURCE_HOSTS:}
+
+  # Image and video pipeline (upload -> transcode -> publish). Off by default: with enabled=false
+  # none of its routes, relays or schedulers exist. Unrelated to the cover settings above.
+  media-pipeline:
+    enabled: ${MEDIA_PIPELINE_ENABLED:false}
+    # Stamped on every upload; must be a profile the Media Service build implements.
+    profile-version: ${MEDIA_PROFILE_VERSION:v1}
+    storage:
+      # Any S3-compatible endpoint: https://storage.googleapis.com (HMAC keys), an R2 account
+      # endpoint, or s3.<region>.amazonaws.com. Originals are uploaded here by the browser.
+      endpoint: ${MEDIA_S3_ENDPOINT:http://127.0.0.1:9000}
+      region: ${MEDIA_S3_REGION:auto}
+      access-key: ${MEDIA_S3_ACCESS_KEY:}
+      secret-key: ${MEDIA_S3_SECRET_KEY:}
+      originals-bucket: ${MEDIA_ORIGINALS_BUCKET:portfolio-media-originals}
+    upload:
+      part-size-bytes: ${MEDIA_UPLOAD_PART_BYTES:8388608}
+      max-video-bytes: ${MEDIA_UPLOAD_MAX_VIDEO_BYTES:2147483648}
+      max-image-bytes: ${MEDIA_UPLOAD_MAX_IMAGE_BYTES:52428800}
+      url-ttl-seconds: ${MEDIA_UPLOAD_URL_TTL_SECONDS:3600}
+      session-ttl-seconds: ${MEDIA_UPLOAD_SESSION_TTL_SECONDS:86400}
+    events:
+      # kafka = publish to the existing topic below. http = post straight to the Media Service,
+      # for running everything on one machine without a broker.
+      transport: ${MEDIA_EVENTS_TRANSPORT:kafka}
+      # No new topic: media events share the search-index topic and carry jobType=MEDIA_PROCESS.
+      topic: ${KAFKA_TOPIC_SEARCH_INDEX:content.search.index.v1}
+      relay-interval-ms: ${MEDIA_RELAY_INTERVAL_MS:5000}
+      max-attempts: ${MEDIA_RELAY_MAX_ATTEMPTS:20}
+    media-service:
+      base-url: ${MEDIA_SERVICE_BASE_URL:}
+      internal-token: ${MEDIA_SERVICE_INTERNAL_TOKEN:}
+      # Cloud Run service-to-service identity token on the wake call. Turn off outside Cloud Run.
+      identity-token: ${MEDIA_SERVICE_IDENTITY_TOKEN:true}
+      wake-wait-ms: ${MEDIA_SERVICE_WAKE_WAIT_MS:600000}
   kafka:
     topics:
       search-index: ${KAFKA_TOPIC_SEARCH_INDEX:content.search.index.v1}

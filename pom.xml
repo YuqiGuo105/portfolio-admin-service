@@ -23,6 +23,7 @@
         <module>admin-service</module>
         <module>search-indexer</module>
         <module>rag-indexer</module>
+        <module>media-service</module>
     </modules>
 
     <properties>

@@ -54,6 +54,13 @@ public class SearchIndexConsumer {
             return;
         }
 
+        // The topic is shared with the Media Service: its events carry jobType=MEDIA_PROCESS and no
+        // indexing job. They are not ours; acknowledge and move on.
+        if ("MEDIA_PROCESS".equals(evt.getJobType())) {
+            ack.acknowledge();
+            return;
+        }
+
         UUID jobId;
         try {
             jobId = UUID.fromString(evt.getIndexingJobId());
