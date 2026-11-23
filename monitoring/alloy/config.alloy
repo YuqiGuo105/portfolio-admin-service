@@ -3,10 +3,10 @@
 
 prometheus.remote_write "grafana_cloud" {
   endpoint {
-    url = env("GRAFANA_PROMETHEUS_URL")
+    url = sys.env("GRAFANA_PROMETHEUS_URL")
     basic_auth {
-      username = env("GRAFANA_PROMETHEUS_USER")
-      password = env("GRAFANA_API_KEY")
+      username = sys.env("GRAFANA_PROMETHEUS_USER")
+      password = sys.env("GRAFANA_API_KEY")
     }
   }
 }
@@ -85,12 +85,82 @@ prometheus.scrape "portfolio_career" {
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]
 }
 
+// Private Media metrics use the existing collector identity, never a public token.
+prometheus.scrape "portfolio_media" {
+  targets = [{"__address__" = "portfolio-media-service-y45c2mnbja-uc.a.run.app", "job" = "portfolio-media-service"}]
+  scheme = "https"
+  metrics_path = "/actuator/prometheus"
+  scrape_interval = "120s"
+  scrape_timeout = "15s"
+  authorization {
+    type = "Bearer"
+    credentials_file = "/var/run/cloud-run-identity/token"
+  }
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+// Health endpoints do not invoke AI, tools, or media jobs. Validate JSON bodies
+// so an HTTP 200 login/error page cannot be mistaken for a healthy service.
+prometheus.exporter.blackbox "portfolio_node" {
+  config = `modules:
+  voice_health:
+    prober: http
+    timeout: 8s
+    http:
+      valid_status_codes: [200]
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      fail_if_body_not_matches_regexp: ['"ok"\s*:\s*true']
+  mcp_health:
+    prober: http
+    timeout: 8s
+    http:
+      valid_status_codes: [200]
+      follow_redirects: false
+      preferred_ip_protocol: ip4
+      fail_if_body_not_matches_regexp: ['"status"\s*:\s*"ok"', '"server"\s*:\s*"yuqi-portfolio-mcp"']
+`
+  target {
+    name = "portfolio-voice-relay"
+    address = "https://portfolio-voice-relay-y45c2mnbja-uc.a.run.app/health"
+    module = "voice_health"
+  }
+  target {
+    name = "portfolio-mcp-server"
+    address = "https://portfolio-mcp-server-y45c2mnbja-uc.a.run.app/health"
+    module = "mcp_health"
+  }
+}
+
+prometheus.scrape "portfolio_node_health" {
+  targets = prometheus.exporter.blackbox.portfolio_node.targets
+  scrape_interval = "120s"
+  scrape_timeout = "10s"
+  forward_to = [prometheus.relabel.portfolio_node.receiver]
+}
+
+// Keep only bounded health series, not per-target TLS/DNS label sets.
+prometheus.relabel "portfolio_node" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  rule {
+    source_labels = ["job"]
+    regex = "integrations/blackbox/(portfolio-voice-relay|portfolio-mcp-server)"
+    target_label = "job"
+    replacement = "$1"
+  }
+  rule {
+    source_labels = ["__name__"]
+    regex = "up|probe_success|probe_duration_seconds|probe_http_status_code"
+    action = "keep"
+  }
+}
+
 loki.write "grafana_cloud" {
   endpoint {
-    url = env("GRAFANA_LOKI_URL")
+    url = sys.env("GRAFANA_LOKI_URL")
     basic_auth {
-      username = env("GRAFANA_LOKI_USER")
-      password = env("GRAFANA_API_KEY")
+      username = sys.env("GRAFANA_LOKI_USER")
+      password = sys.env("GRAFANA_API_KEY")
     }
   }
 }

@@ -83,7 +83,7 @@ jobs:
             PAYLOAD="$(curl --fail --silent --show-error --max-time 30 \
               "https://www.yuqi.site/api/metrics" || true)"
             if echo "${PAYLOAD}" | jq -e \
-              '.summary.total >= 8 and .summary.down == 0' >/dev/null 2>&1; then
+              '.summary.total >= 13 and .summary.down == 0 and .summary.unknown == 0 and .stale != true' >/dev/null 2>&1; then
               echo "${PAYLOAD}" | jq '{updatedAt, summary}'
               exit 0
             fi

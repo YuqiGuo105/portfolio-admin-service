@@ -1,5 +1,42 @@
 # Grafana Cloud Free Tier — Portfolio Platform Monitoring
 
+## Media and Node services
+
+The existing e2-micro Alloy collector also monitors these services:
+
+| Service | Endpoint | Interval | Signals |
+| --- | --- | --- | --- |
+| Media Service | IAM-protected `/actuator/prometheus` | 120s | JVM, HTTP, process, pool metrics |
+| Voice Relay | `/health` | 120s | JSON health result, response duration, HTTP status |
+| MCP Server | `/health` | 120s | JSON health result, response duration, HTTP status |
+
+Media accepts the existing `https://portfolio-metrics.internal` audience. Only
+the collector identity is added as a Cloud Run invoker; no bucket permissions,
+raw-media access, service credentials, AI budgets, or scaling limits change.
+Node probes require HTTP 200 plus the expected JSON fields, and follow no
+redirects. Use `probe_success`, not exporter `up`, for target availability.
+These are health checks, not end-to-end voice/tool/transcoding tests.
+
+Cost: reuse the existing VM and Grafana workspace. Three 120-second checks add
+about 2,160 HTTP requests/day. They can wake Cloud Run instances and keep them
+warm; request execution and idle memory can incur charges. There are no paid
+model calls, uploads, transcodes, new VMs, or new continuously allocated CPUs.
+Node series are allowlisted to four metric names per service. The homepage
+continues to use cached server-side queries, not direct service polling.
+
+Validate with `alloy validate monitoring/alloy/config.alloy` (set the two Grafana
+URL variables), and `node --test monitoring/service-panels.test.mjs`.
+The image build also validates the config with pinned Alloy 1.22.0.
+`add-service-panels.mjs` previews an append-only change to `spring_boot_21`.
+Set `GRAFANA_RENDER_TOKEN` and run it without arguments first; `--apply` requires
+`GRAFANA_DASHBOARD_BACKUP` and preserves the dashboard version for optimistic
+concurrency. Existing panels and public-share settings remain unchanged.
+
+Release checks: confirm all 13 jobs have fresh samples, the two Node services
+have `probe_success=1`, Media has heap/uptime samples, and anonymous Media
+requests remain denied. The homepage distinguishes failed checks from missing
+data; neither missing samples nor failed scrapes are called "idle".
+
 ## Architecture
 
 ```
