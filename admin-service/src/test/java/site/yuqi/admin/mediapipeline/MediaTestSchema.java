@@ -34,12 +34,16 @@ final class MediaTestSchema implements AutoCloseable {
                     if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
                 end $$""");
         admin.execute("create schema " + schema);
+        // Match Supabase defaults so migrations must explicitly remove inherited write grants.
+        admin.execute("alter default privileges in schema " + schema
+                + " grant all on tables to anon, authenticated");
         DriverManagerDataSource dataSource = new DriverManagerDataSource(url + "?currentSchema=" + schema, user, password);
         jdbc = new JdbcTemplate(dataSource);
         transactions = new DataSourceTransactionManager(dataSource);
         new ResourceDatabasePopulator(new ClassPathResource("db/migration/V11__media_pipeline.sql"),
                 new ClassPathResource("db/migration/V12__durable_media_wake.sql"),
-                new ClassPathResource("db/migration/V13__media_presentations.sql")).execute(dataSource);
+                new ClassPathResource("db/migration/V13__media_presentations.sql"),
+                new ClassPathResource("db/migration/V14__media_public_views_read_only.sql")).execute(dataSource);
     }
 
     int count(String sql, Object... args) {
