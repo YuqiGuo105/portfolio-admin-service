@@ -1,0 +1,11 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'media-service/Dockerfile', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/portfolio/portfolio-media-service:${_TAG}', '.']
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'admin-service/Dockerfile', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/portfolio/portfolio-admin-service:${_TAG}', '.']
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/portfolio/portfolio-media-service:${_TAG}
+  - us-central1-docker.pkg.dev/$PROJECT_ID/portfolio/portfolio-admin-service:${_TAG}
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -109,7 +109,9 @@ module via `mvn -pl <module> -am package` and pushes its own image.
 
 Upload an original once; visitors get adaptive video (HLS at 360p, 720p and 1080p) and images in
 AVIF and WebP at six widths. It follows the classic upload → queue → transcode → publish design.
-Everything is off until `MEDIA_PIPELINE_ENABLED=true`.
+The admin upload API is off until `MEDIA_PIPELINE_ENABLED=true`. This is not a global worker
+kill switch: the separate Media Service defaults its Kafka consumer and worker to enabled.
+Do not start that service against production before completing the deployment checks below.
 
 Two services take part. The upload API is part of `admin-service`. `media-service` is the one
 new service: it hears that an upload is complete, plans the work, runs FFmpeg and libvips, checks
@@ -135,6 +137,8 @@ media events. Poison records go to `indexing_kafka_quarantine` with `worker='MED
 **Tables** (`V11__media_pipeline.sql`): `media_assets` (one row per upload, and the publish
 pointer), `media_jobs` (leased units of work), `media_event_outbox`, and the view `media_public`,
 which is the only thing the public site reads.
+`media_public` exposes all READY assets, regardless of whether their parent article is published.
+This pipeline is for public media only; it must not receive confidential draft attachments.
 
 **Object keys.** Originals: `originals/{assetId}/{uploadId}/{file}` in a private bucket. Outputs:
 `media/{assetId}/{sourceVersion}/{profile}/a{attempt}/{rendition}/…` in a public bucket, plus
@@ -153,8 +157,10 @@ which is the only thing the public site reads.
 | Half-written output | Nothing public refers to the files until the final UPDATE; that UPDATE also checks the source version |
 | Lost message, crash between steps | `Recovery` sweeps: no `PLAN` after 60 s, all outputs done but no `PUBLISH`, a dead job with the asset still processing |
 | Upload never finished | `MediaUploadJanitor` aborts the multipart upload and closes the asset after 24 h |
+| Worker wake fails or returns 202 | Separate durable wake state in `media_event_outbox`, bounded backoff and lease-fenced delivery; no Kafka resend |
+| Admin or worker scales to zero | External caller invokes authenticated `/api/internal/media/recover`; it holds the request while the worker drains |
 
-**To switch it on** (nothing below exists yet):
+**Deployment checklist:**
 
 1. One new Cloud Run service from `media-service/Dockerfile` (the image installs FFmpeg and
    libvips). It is CPU-bound: 2 vCPU and 2 GiB is a sensible start.
@@ -164,6 +170,19 @@ which is the only thing the public site reads.
    `MEDIA_SERVICE_BASE_URL`, `MEDIA_SERVICE_INTERNAL_TOKEN` on `admin-service`; `MEDIA_S3_*`,
    both bucket names, `INTERNAL_API_TOKEN`, the Kafka and datasource settings on `media-service`.
 4. The consumer group `media-service-group` needs read access to `content.search.index.v1`.
+5. Configure an external scheduler to call `POST /api/internal/media/recover` on the admin service
+   with a dedicated `X-Media-Recovery-Token` matching `MEDIA_RECOVERY_TOKEN` (32+ random characters).
+   V12 persists wake attempts independently from Kafka delivery. Two worker requests can run at
+   once, with 5-300 second backoff and 20 attempts by default, then a visible wake DLQ.
+   The scheduler is essential: in-process timers cannot wake scaled-to-zero services. Set the
+   admin request timeout and scheduler deadline above both broker delivery and the wake wait (for
+   example 900 seconds with the default 600-second wake wait). Keep the worker private with IAM and its
+   internal token. `scripts/media-cloud-release.mjs` configures the separately authorized
+   Cloud Run services and scheduler; check readiness before enabling the upload API.
+   See [the local E2E and recovery instructions](docs/MEDIA_LOCAL_VERIFICATION.md) before staging.
+6. Set explicit storage lifecycle rules, maximum instances and concurrency. Upload size and
+   duration limits are not a billing cap. Verify output-read, multipart-abort and private-original
+   permissions with the chosen object store, without making originals public.
 
 The tables are created by Flyway the next time `admin-service` starts, whether or not the
 pipeline is enabled.
@@ -174,7 +193,9 @@ then travels over HTTP; every other step is unchanged.
 
 **Tests.** `MEDIA_TEST_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/<name>_test mvn verify` runs the
 failure-rule tests against a real PostgreSQL, each class in its own throwaway schema. The
-end-to-end tests also need `ffmpeg` and `vips` on the `PATH` and are skipped without them.
+end-to-end tests also need `ffmpeg`, `ffprobe`, `vips` and `vipsheader` on the `PATH` and are skipped
+without them. See [local verification](docs/MEDIA_LOCAL_VERIFICATION.md) for the current evidence
+and outstanding gates; sample playback alone is not an end-to-end transcode test.
 
 ---
 

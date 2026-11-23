@@ -45,15 +45,20 @@ public class MediaUploadService {
 
     /** What the browser needs to upload: where each part goes, and which parts are already there. */
     public record UploadSession(UUID assetId, String uploadId, long partSizeBytes, int partCount,
-                                List<Integer> uploadedParts, List<PartUrl> parts, Instant expiresAt) {
+                                List<Integer> uploadedParts, List<PartUrl> parts, Instant expiresAt,
+                                String filename, String contentType, long sizeBytes) {
     }
 
-    public record JobView(String type, String rendition, String status, int attempt, String error) {
+    public record JobView(String type, String rendition, String status, int attempt, String error,
+                          int maxAttempts, Instant startedAt, Instant finishedAt) {
     }
+
+    public record UsageView(String label, String href, int displayWidth) { }
 
     public record AssetView(UUID id, String kind, String status, String title, String filename, String contentType,
                             long sizeBytes, int sourceVersion, String failureCode, String failureMessage,
-                            JsonNode manifest, List<JobView> jobs, Instant createdAt, Instant updatedAt) {
+                            JsonNode manifest, List<JobView> jobs, Instant createdAt, Instant updatedAt,
+                            JsonNode probe, List<UsageView> usages) {
     }
 
     private static final Logger log = LoggerFactory.getLogger(MediaUploadService.class);
@@ -99,6 +104,10 @@ public class MediaUploadService {
             throw new IllegalArgumentException("sizeBytes must be between 1 and " + max + " for a " + kind.toLowerCase(Locale.ROOT));
         }
         String filename = safeName(request.filename());
+        String title = blankToNull(request.title());
+        if (title != null && title.length() > 300) {
+            throw new IllegalArgumentException("Title must be at most 300 characters");
+        }
 
         long partSize = Math.max(MIN_PART_BYTES, limits.partSizeBytes());
         while ((request.sizeBytes() + partSize - 1) / partSize > MAX_PARTS) partSize *= 2;
@@ -113,8 +122,18 @@ public class MediaUploadService {
         } catch (IOException storeTrouble) {
             throw new UncheckedIOException("Could not start the upload in object storage", storeTrouble);
         }
-        assets.insertUploading(assetId, kind, blankToNull(request.title()), filename, contentType, request.sizeBytes(),
-                uploadId, storageUploadId, key, partSize, partCount, limits.sessionTtlSeconds(), actor);
+        try {
+            assets.insertUploading(assetId, kind, title, filename, contentType, request.sizeBytes(),
+                    uploadId, storageUploadId, key, partSize, partCount, limits.sessionTtlSeconds(), actor);
+        } catch (RuntimeException failed) {
+            try {
+                originals.abortMultipartUpload(key, storageUploadId);
+            } catch (IOException cleanupFailed) {
+                failed.addSuppressed(cleanupFailed);
+                log.warn("Could not clean up unbound multipart upload for asset {}", assetId);
+            }
+            throw failed;
+        }
         log.info("Media upload started asset={} kind={} bytes={} parts={}", assetId, kind, request.sizeBytes(), partCount);
         return session(assets.find(assetId).orElseThrow(), List.of());
     }
@@ -142,6 +161,7 @@ public class MediaUploadService {
             throw new IllegalStateException("This is not the asset's current upload session");
         }
         if (!"UPLOADING".equals(asset.status())) return view(asset);   // already confirmed: a retried request
+        requireNotExpired(asset);
 
         OriginalsStore.StoredObject stored;
         try {
@@ -170,8 +190,11 @@ public class MediaUploadService {
     }
 
     public List<AssetView> list(String status, String kind, int limit) {
-        return assets.list(blankToNull(status), blankToNull(kind), Math.max(1, Math.min(limit, 200)))
-                .stream().map(this::view).toList();
+        var rows = assets.list(blankToNull(status), blankToNull(kind), Math.max(1, Math.min(limit, 200)));
+        var jobs = assets.jobsFor(rows);
+        var presentations = assets.presentationsFor(rows);
+        return rows.stream().map(row -> view(row, jobs.getOrDefault(row.id(), List.of()),
+                presentations.getOrDefault(row.id(), List.of()))).toList();
     }
 
     /** Puts a failed asset back in the queue with the source it already has, and announces it again. */
@@ -214,6 +237,13 @@ public class MediaUploadService {
                 throw new IllegalStateException("The upload is incomplete: " + parts.size() + " of " + asset.partCount()
                         + " parts, " + total + " of " + asset.sizeBytes() + " bytes");
             }
+            for (int i = 0; i < parts.size(); i++) {
+                OriginalsStore.Part part = parts.get(i);
+                long expected = Math.min(asset.partSizeBytes(), asset.sizeBytes() - i * asset.partSizeBytes());
+                if (part.number() != i + 1 || part.size() != expected) {
+                    throw new IllegalStateException("The upload has an invalid part sequence or part size");
+                }
+            }
             // An empty list can also mean an earlier call already joined them; the HEAD below settles it.
             if (!parts.isEmpty()) originals.completeMultipartUpload(asset.uploadKey(), asset.storageUploadId(), parts);
         }
@@ -245,21 +275,35 @@ public class MediaUploadService {
                 || asset.storageUploadId() == null) {
             throw new IllegalStateException("This upload session is no longer open");
         }
+        requireNotExpired(asset);
         return asset;
     }
 
+    private static void requireNotExpired(AssetRow asset) {
+        if (asset.uploadExpiresAt() == null || !asset.uploadExpiresAt().isAfter(Instant.now())) {
+            throw new IllegalStateException("This upload session has expired; start a new upload");
+        }
+    }
+
     private UploadSession session(AssetRow asset, List<Integer> uploaded) {
-        Duration ttl = Duration.ofSeconds(properties.upload().urlTtlSeconds());
+        requireNotExpired(asset);
+        long remainingSeconds = Duration.between(Instant.now(), asset.uploadExpiresAt()).toSeconds();
+        Duration ttl = Duration.ofSeconds(Math.max(1, Math.min(properties.upload().urlTtlSeconds(), remainingSeconds)));
         List<PartUrl> parts = new ArrayList<>();
         for (int number = 1; number <= asset.partCount(); number++) {
             parts.add(new PartUrl(number,
                     originals.presignPart(asset.uploadKey(), asset.storageUploadId(), number, ttl).toString()));
         }
         return new UploadSession(asset.id(), asset.uploadId(), asset.partSizeBytes(), asset.partCount(), uploaded,
-                parts, asset.uploadExpiresAt());
+                parts, asset.uploadExpiresAt(), asset.originalFilename(), asset.contentType(), asset.sizeBytes());
     }
 
     private AssetView view(AssetRow asset) {
+        return view(asset, asset.sourceVersion() < 1 ? List.of() : assets.jobs(asset.id(), asset.sourceVersion()),
+                assets.presentations(asset.id()));
+    }
+
+    private AssetView view(AssetRow asset, List<MediaAssetStore.JobRow> jobRows, List<String> presentations) {
         JsonNode manifest = null;
         if ("READY".equals(asset.status()) && asset.manifestJson() != null) {
             try {
@@ -268,13 +312,29 @@ public class MediaUploadService {
                 log.warn("Manifest of asset {} is not valid JSON", asset.id());
             }
         }
-        List<JobView> jobs = asset.sourceVersion() < 1 ? List.of()
-                : assets.jobs(asset.id(), asset.sourceVersion()).stream()
-                .map(job -> new JobView(job.jobType(), job.rendition(), job.status(), job.attempt(), job.lastError()))
+        List<JobView> jobs = jobRows.stream()
+                .map(job -> new JobView(job.jobType(), job.rendition(), job.status(), job.attempt(), job.lastError(),
+                        job.maxAttempts(), job.startedAt(), job.finishedAt()))
                 .toList();
+        JsonNode probe = null;
+        try { if (asset.probeJson() != null) probe = mapper.readTree(asset.probeJson()); }
+        catch (IOException ignored) { log.warn("Invalid probe for {}", asset.id()); }
+        java.util.ArrayList<UsageView> usages = new java.util.ArrayList<>();
+        for (String json : presentations) {
+            try {
+                JsonNode item = mapper.readTree(json);
+                String href = item.path("href").asText();
+                if (href.startsWith("/") && !href.startsWith("//")) {
+                    usages.add(new UsageView(item.path("title").asText("Article"), href, 820));
+                }
+                usages.add(new UsageView(item.path("contentId").asText().startsWith("blog:")
+                        ? "Home / Tech blogs" : item.path("id").asText().equals("yuqi-intro")
+                        ? "Home / Introduction" : "Home / Projects", "/", 600));
+            } catch (IOException ignored) { log.warn("Invalid presentation for {}", asset.id()); }
+        }
         return new AssetView(asset.id(), asset.kind(), asset.status(), asset.title(), asset.originalFilename(),
                 asset.contentType(), asset.sizeBytes(), asset.sourceVersion(), asset.failureCode(),
-                asset.failureMessage(), manifest, jobs, asset.createdAt(), asset.updatedAt());
+                asset.failureMessage(), manifest, jobs, asset.createdAt(), asset.updatedAt(), probe, usages);
     }
 
     /** Only the file name's last segment, reduced to characters that are safe in an object key. */

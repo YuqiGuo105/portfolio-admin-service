@@ -112,6 +112,22 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <profile>
+            <id>media-e2e</id>
+            <build><plugins><plugin>
+                <groupId>org.codehaus.mojo</groupId><artifactId>build-helper-maven-plugin</artifactId><version>3.6.0</version>
+                <executions><execution><id>local-media-harness</id><phase>generate-test-sources</phase>
+                    <goals><goal>add-test-source</goal></goals>
+                    <configuration><sources>
+                        <source>${project.basedir}/../media-service/src/main/java</source>
+                        <source>${project.basedir}/src/media-e2e/java</source>
+                    </sources></configuration>
+                </execution></executions>
+            </plugin></plugins></build>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>

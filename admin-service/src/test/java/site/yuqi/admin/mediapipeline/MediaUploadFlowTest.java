@@ -60,6 +60,7 @@ class MediaUploadFlowTest {
     }
 
     private void build(Map<String, String> overrides) {
+        if (relay != null) relay.close();
         Map<String, String> settings = new HashMap<>(Map.of(
                 "portfolio.media-pipeline.enabled", "true",
                 "portfolio.media-pipeline.storage.endpoint", s3.endpoint(),
@@ -76,7 +77,7 @@ class MediaUploadFlowTest {
         };
         MediaServiceWakeClient wake = new MediaServiceWakeClient(properties,
                 new CloudRunIdentityTokenProvider(mapper, "http://127.0.0.1:9/unused"));
-        relay = new MediaOutboxRelay(assets, transport, wake, mapper, properties);
+        relay = new MediaOutboxRelay(assets, transport, mapper, properties);
         uploads = new MediaUploadService(assets, new OriginalsStore(properties), properties, relay,
                 db.transactions, mapper);
     }
@@ -180,6 +181,7 @@ class MediaUploadFlowTest {
         assertThat(db.count("select count(*) from media_event_outbox where next_attempt_at > now()")).as("backing off").isEqualTo(1);
 
         brokerDown = false;
+        relay.close(); // Stop background claims before manually advancing the retry clock.
         makeDue();
         assertThat(relay.drainOnce()).isEqualTo(1);
         assertThat(relay.drainOnce()).isZero();
@@ -199,6 +201,7 @@ class MediaUploadFlowTest {
         UploadSession session = startAndUpload(100);
         uploads.complete(session.assetId(), session.uploadId());
         awaitAttempts(session.assetId(), 1);
+        relay.close();
         makeDue();
         assertThat(assets.claimOutbox(10, 120)).as("a relay takes the event and then dies").hasSize(1);
 
@@ -216,8 +219,10 @@ class MediaUploadFlowTest {
         UploadSession session = startAndUpload(100);
         uploads.complete(session.assetId(), session.uploadId());
         awaitAttempts(session.assetId(), 1);
+        relay.close();
         makeDue();
         relay.drainOnce();
+        awaitAttempts(session.assetId(), 2);
 
         assertThat(db.text("select status || ' ' || attempts from media_event_outbox where asset_id = ?", session.assetId()))
                 .isEqualTo("DLQ 2");

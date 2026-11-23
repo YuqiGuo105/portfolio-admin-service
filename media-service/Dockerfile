@@ -27,6 +27,8 @@ RUN apt-get update \
  && ffmpeg -version | head -n 1 && vips --version
 
 COPY --from=build /workspace/media-service/target/portfolio-media-service-*.jar /app/app.jar
+RUN useradd --system --uid 10001 --create-home media
+USER media
 
 # Transcoding is CPU-bound: give the JVM half the memory and leave the rest to FFmpeg.
 ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxRAMPercentage=50 -Djava.net.preferIPv6Addresses=true"

@@ -22,6 +22,7 @@ import java.util.UUID;
 @Component
 @ConditionalOnProperty(name = "portfolio.media-pipeline.enabled", havingValue = "true")
 public class MediaServiceWakeClient {
+    private final com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
     private static final Logger log = LoggerFactory.getLogger(MediaServiceWakeClient.class);
 
@@ -43,13 +44,15 @@ public class MediaServiceWakeClient {
         }
         try {
             HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(
-                            base + "/api/internal/worker/drain/" + assetId + "?maxWaitMs=" + target.wakeWaitMs()))
-                    .timeout(Duration.ofMillis(target.wakeWaitMs() + 15_000L))
+                            base + "/api/internal/worker/drain/" + assetId + "?maxWaitMs=" + waitMillis()))
+                    .timeout(Duration.ofMillis(waitMillis() + 15_000L))
                     .header("X-Internal-Token", target.internalToken())
                     .POST(HttpRequest.BodyPublishers.noBody());
             if (target.identityToken()) request.header("Authorization", "Bearer " + identityTokens.tokenFor(base));
             HttpResponse<String> response = http.send(request.build(), HttpResponse.BodyHandlers.ofString());
-            boolean finished = response.statusCode() == 200;
+            var body = response.statusCode()==200 ? mapper.readTree(response.body()) : null;
+            boolean finished = body!=null && assetId.toString().equals(body.path("assetId").asText())
+                    && java.util.Set.of("READY","FAILED").contains(body.path("status").asText());
             if (!finished) log.info("Media Service wake for asset {} returned HTTP {}", assetId, response.statusCode());
             return finished;
         } catch (InterruptedException interrupted) {
@@ -60,4 +63,11 @@ public class MediaServiceWakeClient {
             return false;
         }
     }
+
+    public boolean isConfigured() {
+        return target.baseUrl()!=null && !target.baseUrl().isBlank()
+                && target.internalToken()!=null && !target.internalToken().isBlank();
+    }
+
+    public long waitMillis() { return Math.max(1000,Math.min(600_000,target.wakeWaitMs())); }
 }

@@ -106,6 +106,7 @@ portfolio:
   # none of its routes, relays or schedulers exist. Unrelated to the cover settings above.
   media-pipeline:
     enabled: ${MEDIA_PIPELINE_ENABLED:false}
+    recovery-token: ${MEDIA_RECOVERY_TOKEN:}
     # Stamped on every upload; must be a profile the Media Service build implements.
     profile-version: ${MEDIA_PROFILE_VERSION:v1}
     storage:

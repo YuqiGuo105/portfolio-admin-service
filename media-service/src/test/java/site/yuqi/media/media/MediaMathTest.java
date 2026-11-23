@@ -157,6 +157,23 @@ class MediaMathTest {
                 """);
     }
 
+    @Test
+    void everyInputRejectsPlaylistDemuxersBeforeOpeningReferences() {
+        Path source = Path.of("upload.bin");
+        VideoInfo info = new VideoInfo(1280, 720, 10, 30, true, "h264", "mov,mp4", false);
+        var commands = List.of(
+                VideoCommands.probe("ffprobe", source),
+                VideoCommands.posterFrame("ffmpeg", source, Path.of("poster.jpg"), info),
+                VideoCommands.loopMp4("ffmpeg", source, Path.of("loop.mp4"), info, "veryfast"),
+                VideoCommands.hlsRendition("ffmpeg", source, Path.of("out"), info,
+                        Ladder.videoRungs("v1", 720).get(0), "veryfast"));
+        for (var command : commands) {
+            assertThat(command).containsSubsequence("-protocol_whitelist", "file");
+            assertThat(command).containsSubsequence("-format_whitelist", "mov,matroska,webm");
+            assertThat(command.indexOf("-format_whitelist")).isLessThan(command.indexOf(source.toString()));
+        }
+    }
+
     private static List<String> names(List<Ladder.Rung> rungs) {
         return rungs.stream().map(Ladder.Rung::name).toList();
     }

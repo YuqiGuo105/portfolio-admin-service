@@ -1,0 +1,9 @@
+.git
+.idea
+.env*
+**/target
+**/node_modules
+*.log
+*.pem
+*.key
+**/.DS_Store

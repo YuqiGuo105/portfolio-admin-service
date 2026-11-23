@@ -10,6 +10,7 @@ import java.util.Locale;
  * one rendition.
  */
 public final class VideoCommands {
+    private static final String INPUT_FORMATS = "mov,matroska,webm";
 
     public record Size(int width, int height) {
     }
@@ -41,7 +42,7 @@ public final class VideoCommands {
         cmd.addAll(List.of("-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1"));
         cmd.addAll(List.of("-vf", filters(info, size)));
         cmd.addAll(List.of(
-                "-c:v", "libx264", "-preset", preset,
+                "-c:v", "libx264", "-threads", "2", "-preset", preset,
                 "-profile:v", rung.h264Profile(), "-level:v", h264Level(size, info.outputFps()),
                 "-b:v", rung.videoKbps() + "k", "-maxrate", rung.maxrateKbps() + "k",
                 "-bufsize", rung.bufsizeKbps() + "k",
@@ -68,7 +69,7 @@ public final class VideoCommands {
         cmd.addAll(List.of("-map", "0:v:0", "-an", "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1"));
         cmd.addAll(List.of("-vf", filters(info, size)));
         cmd.addAll(List.of(
-                "-c:v", "libx264", "-preset", preset, "-profile:v", "main",
+                "-c:v", "libx264", "-threads", "2", "-preset", preset, "-profile:v", "main",
                 "-level:v", h264Level(size, info.outputFps()),
                 "-crf", "23", "-maxrate", "3000k", "-bufsize", "6000k",
                 "-movflags", "+faststart", target.toString()));
@@ -80,7 +81,8 @@ public final class VideoCommands {
         double at = Math.min(3.0, info.durationSeconds() * 0.1);
         Size size = outputSize(info, Math.min(1080, info.shortSide() - info.shortSide() % 2));
         List<String> cmd = new ArrayList<>(List.of(ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
-                "-protocol_whitelist", "file", "-ss", String.format(Locale.ROOT, "%.3f", at),
+                "-protocol_whitelist", "file", "-format_whitelist", INPUT_FORMATS,
+                "-ss", String.format(Locale.ROOT, "%.3f", at),
                 "-i", source.toString()));
         cmd.addAll(List.of("-map", "0:v:0", "-frames:v", "1", "-map_metadata", "-1",
                 "-vf", filters(info, size).replace(",format=yuv420p", ""), target.toString()));
@@ -89,13 +91,14 @@ public final class VideoCommands {
 
     public static List<String> probe(String ffprobe, Path source) {
         return List.of(ffprobe, "-v", "error", "-protocol_whitelist", "file",
+                "-format_whitelist", INPUT_FORMATS,
                 "-print_format", "json", "-show_format", "-show_streams", source.toString());
     }
 
-    /** Only local files may be opened: an uploaded playlist cannot make FFmpeg fetch URLs. */
+    /** Reject playlist demuxers before they can follow network or local-file references. */
     private static List<String> input(String ffmpeg, Path source) {
         return new ArrayList<>(List.of(ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
-                "-protocol_whitelist", "file", "-i", source.toString()));
+                "-protocol_whitelist", "file", "-format_whitelist", INPUT_FORMATS, "-i", source.toString()));
     }
 
     private static String filters(VideoInfo info, Size size) {

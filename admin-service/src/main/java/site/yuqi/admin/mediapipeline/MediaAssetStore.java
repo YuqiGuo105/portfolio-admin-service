@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Map;
+import java.util.HashMap;
 
 /**
  * SQL for the Content Service's half of the media tables: upload sessions, the source binding,
@@ -25,10 +27,12 @@ public class MediaAssetStore {
             UUID id, String kind, String status, String title, String originalFilename, String contentType,
             long sizeBytes, String uploadId, String storageUploadId, String uploadKey, Long partSizeBytes,
             Integer partCount, Instant uploadExpiresAt, int sourceVersion, String sourceKey, String profileVersion,
-            String manifestJson, String failureCode, String failureMessage, Instant createdAt, Instant updatedAt) {
+            String manifestJson, String failureCode, String failureMessage, Instant createdAt, Instant updatedAt,
+            String probeJson) {
     }
 
-    public record JobRow(String jobType, String rendition, String status, int attempt, String lastError) {
+    public record JobRow(String jobType, String rendition, String status, int attempt, String lastError,
+                         int maxAttempts, Instant startedAt, Instant finishedAt) {
     }
 
     public record OutboxRow(UUID id, String eventId, UUID assetId, int sourceVersion, String partitionKey,
@@ -38,7 +42,8 @@ public class MediaAssetStore {
     private static final String COLUMNS = """
             id, kind, status, title, original_filename, content_type, size_bytes, upload_id, storage_upload_id,
             upload_key, part_size_bytes, part_count, upload_expires_at, source_version, source_key,
-            profile_version, manifest::text as manifest, failure_code, failure_message, created_at, updated_at
+            profile_version, manifest::text as manifest, failure_code, failure_message, created_at, updated_at,
+            probe::text as probe
             """;
 
     private static final RowMapper<AssetRow> ASSET = (rs, n) -> new AssetRow(
@@ -50,7 +55,7 @@ public class MediaAssetStore {
             rs.getString("source_key"), rs.getString("profile_version"), rs.getString("manifest"),
             rs.getString("failure_code"), rs.getString("failure_message"),
             instant(rs.getObject("created_at", OffsetDateTime.class)),
-            instant(rs.getObject("updated_at", OffsetDateTime.class)));
+            instant(rs.getObject("updated_at", OffsetDateTime.class)), rs.getString("probe"));
 
     private final JdbcTemplate jdbc;
 
@@ -94,10 +99,48 @@ public class MediaAssetStore {
 
     public List<JobRow> jobs(UUID assetId, int sourceVersion) {
         return jdbc.query("""
-                select job_type, rendition, status, attempt, last_error from media_jobs
-                 where asset_id = ? and source_version = ? order by created_at, rendition
+                select job_type, rendition, status, attempt, last_error, max_attempts, started_at, finished_at
+                  from media_jobs
+                 where asset_id = ? and source_version = ?
+                   and profile_version = (select profile_version from media_assets where id = ?)
+                 order by created_at, rendition
                 """, (rs, n) -> new JobRow(rs.getString(1), rs.getString(2), rs.getString(3), rs.getInt(4),
-                rs.getString(5)), assetId, sourceVersion);
+                rs.getString(5), rs.getInt(6), instant(rs.getObject(7, OffsetDateTime.class)),
+                instant(rs.getObject(8, OffsetDateTime.class))), assetId, sourceVersion, assetId);
+    }
+
+    public List<String> presentations(UUID assetId) {
+        return jdbc.queryForList("select presentation::text from media_presentations where asset_id = ? and enabled = true",
+                String.class, assetId);
+    }
+
+    public Map<UUID, List<JobRow>> jobsFor(List<AssetRow> rows) {
+        Map<UUID, List<JobRow>> result = new HashMap<>();
+        if (rows.isEmpty()) return result;
+        String slots = String.join(",", java.util.Collections.nCopies(rows.size(), "?"));
+        jdbc.query("""
+                select j.asset_id, j.job_type, j.rendition, j.status, j.attempt, j.last_error,
+                       j.max_attempts, j.started_at, j.finished_at
+                  from media_jobs j join media_assets a on a.id = j.asset_id
+                 where j.source_version = a.source_version and j.profile_version = a.profile_version
+                   and j.asset_id in (""" + slots + ") order by j.created_at, j.rendition", rs -> {
+            UUID id = rs.getObject(1, UUID.class);
+            result.computeIfAbsent(id, ignored -> new ArrayList<>()).add(new JobRow(rs.getString(2),
+                    rs.getString(3), rs.getString(4), rs.getInt(5), rs.getString(6), rs.getInt(7),
+                    instant(rs.getObject(8, OffsetDateTime.class)), instant(rs.getObject(9, OffsetDateTime.class))));
+        }, rows.stream().map(AssetRow::id).toArray());
+        return result;
+    }
+
+    public Map<UUID, List<String>> presentationsFor(List<AssetRow> rows) {
+        Map<UUID, List<String>> result = new HashMap<>();
+        if (rows.isEmpty()) return result;
+        String slots = String.join(",", java.util.Collections.nCopies(rows.size(), "?"));
+        jdbc.query("select asset_id, presentation::text from media_presentations where enabled = true and asset_id in ("
+                + slots + ")", rs -> {
+            result.computeIfAbsent(rs.getObject(1, UUID.class), ignored -> new ArrayList<>()).add(rs.getString(2));
+        }, rows.stream().map(AssetRow::id).toArray());
+        return result;
     }
 
     /**

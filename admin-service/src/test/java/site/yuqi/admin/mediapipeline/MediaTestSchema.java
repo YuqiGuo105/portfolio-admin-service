@@ -37,7 +37,9 @@ final class MediaTestSchema implements AutoCloseable {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(url + "?currentSchema=" + schema, user, password);
         jdbc = new JdbcTemplate(dataSource);
         transactions = new DataSourceTransactionManager(dataSource);
-        new ResourceDatabasePopulator(new ClassPathResource("db/migration/V11__media_pipeline.sql")).execute(dataSource);
+        new ResourceDatabasePopulator(new ClassPathResource("db/migration/V11__media_pipeline.sql"),
+                new ClassPathResource("db/migration/V12__durable_media_wake.sql"),
+                new ClassPathResource("db/migration/V13__media_presentations.sql")).execute(dataSource);
     }
 
     int count(String sql, Object... args) {

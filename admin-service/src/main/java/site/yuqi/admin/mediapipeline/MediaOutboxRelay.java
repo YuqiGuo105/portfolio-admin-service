@@ -31,11 +31,11 @@ public class MediaOutboxRelay {
 
     private static final Logger log = LoggerFactory.getLogger(MediaOutboxRelay.class);
     private static final int BATCH = 20;
+    private static final long START_BUDGET_NANOS = TimeUnit.SECONDS.toNanos(5);
     private static final int LEASE_SECONDS = 120;
 
     private final MediaAssetStore store;
     private final MediaEventTransport transport;
-    private final MediaServiceWakeClient wake;
     private final ObjectMapper mapper;
     private final int maxAttempts;
     private final AtomicBoolean draining = new AtomicBoolean();
@@ -46,11 +46,10 @@ public class MediaOutboxRelay {
         return thread;
     });
 
-    public MediaOutboxRelay(MediaAssetStore store, MediaEventTransport transport, MediaServiceWakeClient wake,
+    public MediaOutboxRelay(MediaAssetStore store, MediaEventTransport transport,
                             ObjectMapper mapper, MediaPipelineProperties properties) {
         this.store = store;
         this.transport = transport;
-        this.wake = wake;
         this.mapper = mapper;
         this.maxAttempts = properties.events().maxAttempts();
     }
@@ -66,16 +65,18 @@ public class MediaOutboxRelay {
         submit(this::drainOnce);
     }
 
-    /** Sends everything that is due. Returns how many events were delivered. */
+    /** Bounded pass: leave unclaimed work for the next tick instead of holding a request indefinitely. */
     public int drainOnce() {
         if (!draining.compareAndSet(false, true)) return 0;
         int sent = 0;
+        long started = System.nanoTime();
         try {
-            for (List<OutboxRow> batch = store.claimOutbox(BATCH, LEASE_SECONDS); !batch.isEmpty();
-                 batch = store.claimOutbox(BATCH, LEASE_SECONDS)) {
-                for (OutboxRow row : batch) {
-                    if (deliver(row)) sent++;
-                }
+            for (int attempted = 0; attempted < BATCH && !Thread.currentThread().isInterrupted()
+                    && System.nanoTime()-started < START_BUDGET_NANOS; attempted++) {
+                // Claim only what this pass can actually send; do not strand a batch under leases.
+                List<OutboxRow> batch = store.claimOutbox(1, LEASE_SECONDS);
+                if (batch.isEmpty()) break;
+                if (deliver(batch.getFirst())) sent++;
             }
         } catch (RuntimeException databaseTrouble) {
             log.warn("Media outbox relay could not read the outbox: {}",
@@ -92,10 +93,10 @@ public class MediaOutboxRelay {
             store.markOutboxSent(row.id());
             log.info("Media event {} delivered for asset {} v{} (attempt {})", row.eventId(), row.assetId(),
                     row.sourceVersion(), row.attempts());
-            // A scale-to-zero Media Service needs a request before it will read Kafka.
-            submit(() -> wake.wakeAndAwait(row.assetId()));
+            // wake_status remains pending in this durable row until the separate dispatcher finishes.
             return true;
         } catch (Exception failed) {
+            if (failed instanceof InterruptedException) Thread.currentThread().interrupt();
             long retryIn = Math.min(600, 5L << Math.min(7, row.attempts() - 1));
             store.markOutboxFailed(row.id(), failed.toString(), retryIn, maxAttempts);
             log.warn("Media event {} not delivered (attempt {}), next try in {} s: {}", row.eventId(),
@@ -108,7 +109,7 @@ public class MediaOutboxRelay {
         try {
             background.execute(task);
         } catch (RejectedExecutionException saturated) {
-            // Nothing is lost: the scheduled relay and the Media Service's own recovery sweep cover it.
+            // The row remains due; a scheduled tick or external recovery request can retry it.
             log.debug("Media relay background queue is full");
         }
     }
@@ -116,5 +117,14 @@ public class MediaOutboxRelay {
     @PreDestroy
     void close() {
         background.shutdown();
+        try {
+            if (!background.awaitTermination(35, TimeUnit.SECONDS)) {
+                background.shutdownNow();
+                background.awaitTermination(5, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException interrupted) {
+            background.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }
