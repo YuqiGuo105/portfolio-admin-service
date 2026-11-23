@@ -157,7 +157,12 @@ class MediaHttpEndToEndTest {
                 var wake=new MediaServiceWakeClient(config,new CloudRunIdentityTokenProvider(mapper,"http://127.0.0.1:9/unused"));
                 var dispatcher=new MediaWakeDispatcher(new MediaWakeStore(db.jdbc),wake,config);
                 var uploads=new MediaUploadService(store,new OriginalsStore(config),config,relay,db.transactions,mapper);
-                try(var admin=web(new MediaAdminController(uploads),
+                var presentations=new MediaPresentationService(db.jdbc,new MediaArticlePolicy(store),
+                        mock(site.yuqi.admin.service.AuditLogService.class),mapper,db.transactions);
+                var management=new MediaManagementService(store,uploads,
+                        mock(site.yuqi.admin.service.AuditLogService.class),db.transactions);
+                try(var admin=web(new MediaAdminController(uploads,management),
+                        new MediaPresentationController(presentations),
                         new MediaRecoveryController(relay,dispatcher,recoveryToken),
                         new InternalTokenFilter(internalToken),
                         new AdminAuthFilter(adminSecret,mock(SupabaseTokenVerifier.class),"",mock(AdminUserService.class)))) {
@@ -178,6 +183,21 @@ class MediaHttpEndToEndTest {
                         assertThat(wakesReceived.get()).isGreaterThanOrEqualTo(assetCount + 1);
                         assertThat(received.get()).isEqualTo(assetCount);
                         assertThat(db.count("select count(*) from media_public")).isEqualTo(assetCount);
+                        // The same processed asset can be published to the homepage without a separate MP4 upload.
+                        UUID videoId=UUID.fromString(db.text("select id::text from media_assets where kind='VIDEO' and status='READY' limit 1"));
+                        String placementUrl=url(admin)+"/api/admin/media/presentations/yuqi-intro";
+                        var beforeResponse=http.send(HttpRequest.newBuilder(URI.create(placementUrl))
+                                .header("X-Admin-Secret",adminSecret).build(),HttpResponse.BodyHandlers.ofString());
+                        assertThat(beforeResponse.statusCode()).isEqualTo(200);
+                        String revision=mapper.readTree(beforeResponse.body()).path("revision").asText();
+                        String replacement=mapper.writeValueAsString(Map.of("id",videoId,"expectedRevision",revision,
+                                "title","Local processed introduction","chapters",List.of(Map.of("seconds",0,"title","Start"))));
+                        var replaceRequest=HttpRequest.newBuilder(URI.create(placementUrl)).header("X-Admin-Secret",adminSecret)
+                                .header("Content-Type","application/json").PUT(HttpRequest.BodyPublishers.ofString(replacement)).build();
+                        assertThat(http.send(replaceRequest,HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(200);
+                        assertThat(db.text("select asset_id::text from media_demo_catalog where placement_key='yuqi-intro'"))
+                                .isEqualTo(videoId.toString());
+                        Files.writeString(output.resolve("presentation.json"),db.text("select row_to_json(p)::text from media_demo_catalog p where placement_key='yuqi-intro'"));
                         assertThat(db.count("select count(*) from media_event_outbox")).isEqualTo(assetCount);
                         assertThat(db.count("select max(wake_attempts) from media_event_outbox")).isGreaterThanOrEqualTo(2);
                         // Replay the real Kafka payload: one PLAN and one publication per asset remain.
