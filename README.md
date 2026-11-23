@@ -171,7 +171,8 @@ This pipeline is for public media only; it must not receive confidential draft a
    both bucket names, `INTERNAL_API_TOKEN`, the Kafka and datasource settings on `media-service`.
 4. The consumer group `media-service-group` needs read access to `content.search.index.v1`.
 5. Configure an external scheduler to call `POST /api/internal/media/recover` on the admin service
-   with a dedicated `X-Media-Recovery-Token` matching `MEDIA_RECOVERY_TOKEN` (32+ random characters).
+   with a dedicated `X-Media-Recovery-Token` matching `MEDIA_RECOVERY_TOKEN` (32+ random characters)
+   and `X-Internal-Token` matching the admin service's `INTERNAL_API_TOKEN`. Both are required.
    V12 persists wake attempts independently from Kafka delivery. Two worker requests can run at
    once, with 5-300 second backoff and 20 attempts by default, then a visible wake DLQ.
    The scheduler is essential: in-process timers cannot wake scaled-to-zero services. Set the

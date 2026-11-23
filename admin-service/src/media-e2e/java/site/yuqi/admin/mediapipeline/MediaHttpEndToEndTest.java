@@ -27,6 +27,7 @@ import org.springframework.kafka.listener.AcknowledgingMessageListener;
 import org.springframework.kafka.support.serializer.JsonSerializer;
 import org.springframework.kafka.test.EmbeddedKafkaKraftBroker;
 import site.yuqi.admin.security.AdminAuthFilter;
+import site.yuqi.admin.security.InternalTokenFilter;
 import site.yuqi.admin.security.SupabaseTokenVerifier;
 import site.yuqi.admin.service.AdminUserService;
 import site.yuqi.admin.events.CloudRunIdentityTokenProvider;
@@ -74,6 +75,7 @@ class MediaHttpEndToEndTest {
         }
         String workerToken=UUID.randomUUID().toString();
         String recoveryToken=UUID.randomUUID().toString();
+        String internalToken=UUID.randomUUID().toString();
         String adminSecret=UUID.randomUUID().toString();
         Map<String,String> settings=new HashMap<>(Map.of(
                 "portfolio.media-pipeline.storage.endpoint","http://127.0.0.1:19090",
@@ -157,13 +159,14 @@ class MediaHttpEndToEndTest {
                 var uploads=new MediaUploadService(store,new OriginalsStore(config),config,relay,db.transactions,mapper);
                 try(var admin=web(new MediaAdminController(uploads),
                         new MediaRecoveryController(relay,dispatcher,recoveryToken),
+                        new InternalTokenFilter(internalToken),
                         new AdminAuthFilter(adminSecret,mock(SupabaseTokenVerifier.class),"",mock(AdminUserService.class)))) {
                     var http=HttpClient.newHttpClient();
                     assertThat(http.send(HttpRequest.newBuilder(URI.create(url(admin)+"/api/admin/media")).build(),HttpResponse.BodyHandlers.discarding()).statusCode()).isEqualTo(401);
                     assertThat(http.send(HttpRequest.newBuilder(URI.create(url(admin)+"/api/internal/media/recover")).POST(HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.discarding()).statusCode()).isEqualTo(401);
                     ProcessBuilder clock=new ProcessBuilder("node",Path.of("../scripts/media-recovery-loop.mjs").toAbsolutePath().toString());
                     clock.environment().putAll(Map.of("MEDIA_RECOVERY_URL",url(admin)+"/api/internal/media/recover",
-                            "MEDIA_RECOVERY_TOKEN",recoveryToken,"MEDIA_RECOVERY_INTERVAL_MS","1000"));
+                            "MEDIA_RECOVERY_TOKEN",recoveryToken,"INTERNAL_API_TOKEN",internalToken,"MEDIA_RECOVERY_INTERVAL_MS","1000"));
                     Process scheduler=clock.redirectErrorStream(true).redirectOutput(output.resolve("recovery.log").toFile()).start();
                     try {
                         ProcessBuilder client=new ProcessBuilder("node",frontend.resolve("scripts/media-local-e2e.mjs").toString());

@@ -78,9 +78,12 @@ if (mode === 'admin' || mode === 'enable') {
   const parent = `https://cloudscheduler.googleapis.com/v1/projects/${project}/locations/${region}`;
   const name = `projects/${project}/locations/${region}/jobs/portfolio-media-recovery`;
   const token = run(['secrets', 'versions', 'access', 'latest', '--secret', 'MEDIA_RECOVERY_TOKEN']);
+  const internalRef = admin.spec.template.spec.containers[0].env.find(item => item.name === 'INTERNAL_API_TOKEN')?.valueFrom?.secretKeyRef;
+  assert.ok(internalRef?.name && internalRef?.key, 'Admin internal-token secret reference is required');
+  const internalToken = run(['secrets', 'versions', 'access', internalRef.key, '--secret', internalRef.name]);
   const body = { name, description: 'Recover durable media delivery and wake scale-to-zero worker', schedule: '*/15 * * * *', timeZone: 'Etc/UTC', attemptDeadline: '900s',
     retryConfig: { retryCount: 2, minBackoffDuration: '60s', maxBackoffDuration: '300s' },
-    httpTarget: { uri: `${admin.status.url}/api/internal/media/recover`, httpMethod: 'POST', headers: { 'X-Media-Recovery-Token': token } } };
+    httpTarget: { uri: `${admin.status.url}/api/internal/media/recover`, httpMethod: 'POST', headers: { 'X-Media-Recovery-Token': token, 'X-Internal-Token': internalToken } } };
   let exists = true;
   try { await request(`${parent}/jobs/portfolio-media-recovery`); } catch (error) { if (!error.message.includes('404')) throw error; exists = false; }
   await request(exists ? `${parent}/jobs/portfolio-media-recovery` : `${parent}/jobs`, exists ? 'PATCH' : 'POST', body);

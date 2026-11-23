@@ -5,6 +5,8 @@ if (target.hostname !== '127.0.0.1' || target.protocol !== 'http:' || target.pat
 }
 const token = process.env.MEDIA_RECOVERY_TOKEN || '';
 if (token.length < 32) throw new Error('A dedicated recovery token of at least 32 characters is required');
+const internalToken = process.env.INTERNAL_API_TOKEN || '';
+if (!internalToken.trim()) throw new Error('The internal API token is required');
 const interval = Math.max(1000, Number(process.env.MEDIA_RECOVERY_INTERVAL_MS) || 60000);
 let stopped = false;
 let active;
@@ -18,7 +20,7 @@ while (!stopped) {
   const timeout = setTimeout(() => active.abort(), 900000);
   try {
     const response = await fetch(target, { method: 'POST', redirect: 'error', signal: active.signal,
-      headers: { 'X-Media-Recovery-Token': token } });
+      headers: { 'X-Media-Recovery-Token': token, 'X-Internal-Token': internalToken } });
     if (!response.ok) throw new Error(`Recovery HTTP ${response.status}`);
     console.log('Media recovery', await response.json());
   } catch (error) {
