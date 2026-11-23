@@ -26,6 +26,8 @@ public interface ContentAdapter {
 
     Optional<NormalizedContent> get(String sourceId);
 
+    default Optional<NormalizedContent> getForUpdate(String sourceId) { return get(sourceId); }
+
     NormalizedContent create(Map<String, Object> input);
 
     NormalizedContent update(String sourceId, Map<String, Object> input);

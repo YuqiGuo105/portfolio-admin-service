@@ -9,6 +9,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AdminAuthFilterPolicyTest {
 
     @Test
+    void mediaRequiresAdministratorForEveryMethod() {
+        for (String method : java.util.List.of("GET", "HEAD", "POST", "PUT", "DELETE")) {
+            for (String path : java.util.List.of("/api/admin/media", "/api/admin/media/limits", "/api/admin/media/asset/deletion-check")) {
+                assertThat(AdminAuthFilter.authorizeRequest(request(method, path), AdminUserRole.EDITOR, false)).isFalse();
+                assertThat(AdminAuthFilter.authorizeRequest(request(method, path), AdminUserRole.PUBLISHER, false)).isFalse();
+                assertThat(AdminAuthFilter.authorizeRequest(request(method, path), AdminUserRole.ADMIN, false)).isTrue();
+            }
+        }
+    }
+
+    @Test
     void fullTextSearchProjectionRequiresAdmin() {
         for (String suffix : java.util.List.of("", "/")) {
             var request = request("GET", "/api/admin/content/search-projection" + suffix);

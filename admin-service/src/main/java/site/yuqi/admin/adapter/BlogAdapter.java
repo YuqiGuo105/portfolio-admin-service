@@ -38,6 +38,11 @@ public class BlogAdapter implements ContentAdapter {
     }
 
     @Override
+    public Optional<NormalizedContent> getForUpdate(String sourceId) {
+        return repository.findForUpdate(UUID.fromString(sourceId)).map(this::normalize);
+    }
+
+    @Override
     public NormalizedContent create(Map<String, Object> input) {
         Blog row = Blog.builder()
                 .id(UUID.randomUUID())

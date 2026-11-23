@@ -11,6 +11,10 @@ import java.util.UUID;
 
 public interface BlogRepository extends JpaRepository<Blog, UUID> {
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select b from Blog b where b.id = :id")
+    java.util.Optional<Blog> findForUpdate(@Param("id") UUID id);
+
     @Query("""
         select b from Blog b
         where (cast(:keyword as string) is null or

@@ -213,7 +213,8 @@ public class AdminAuthFilter extends OncePerRequestFilter {
             return atLeast(role, site.yuqi.admin.domain.AdminUserRole.ADMIN);
         }
 
-        if (path.equals("/api/admin/knowledge") || path.startsWith("/api/admin/knowledge/")) {
+        if (path.equals("/api/admin/knowledge") || path.startsWith("/api/admin/knowledge/")
+                || RequestPaths.under(path, "/api/admin/media")) {
             return atLeast(role, site.yuqi.admin.domain.AdminUserRole.ADMIN);
         }
 

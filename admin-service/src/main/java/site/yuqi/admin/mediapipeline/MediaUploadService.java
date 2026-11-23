@@ -58,7 +58,8 @@ public class MediaUploadService {
     public record AssetView(UUID id, String kind, String status, String title, String filename, String contentType,
                             long sizeBytes, int sourceVersion, String failureCode, String failureMessage,
                             JsonNode manifest, List<JobView> jobs, Instant createdAt, Instant updatedAt,
-                            JsonNode probe, List<UsageView> usages) {
+                            JsonNode probe, List<UsageView> usages, String description, int metadataVersion,
+                            Instant deletedAt) {
     }
 
     private static final Logger log = LoggerFactory.getLogger(MediaUploadService.class);
@@ -157,6 +158,7 @@ public class MediaUploadService {
      */
     public AssetView complete(UUID assetId, String uploadId) {
         AssetRow asset = assets.find(assetId).orElseThrow(() -> new NoSuchElementException("No media asset " + assetId));
+        requireNotDeleted(asset);
         if (uploadId == null || !uploadId.equals(asset.uploadId())) {
             throw new IllegalStateException("This is not the asset's current upload session");
         }
@@ -200,6 +202,7 @@ public class MediaUploadService {
     /** Puts a failed asset back in the queue with the source it already has, and announces it again. */
     public AssetView retry(UUID assetId) {
         AssetRow asset = assets.find(assetId).orElseThrow(() -> new NoSuchElementException("No media asset " + assetId));
+        requireNotDeleted(asset);
         if (!"FAILED".equals(asset.status()) || asset.sourceVersion() < 1) {
             throw new IllegalStateException("Only an asset whose processing failed can be retried; upload again instead");
         }
@@ -271,6 +274,7 @@ public class MediaUploadService {
 
     private AssetRow requireOpenUpload(UUID assetId, String uploadId) {
         AssetRow asset = assets.find(assetId).orElseThrow(() -> new NoSuchElementException("No media asset " + assetId));
+        requireNotDeleted(asset);
         if (!"UPLOADING".equals(asset.status()) || uploadId == null || !uploadId.equals(asset.uploadId())
                 || asset.storageUploadId() == null) {
             throw new IllegalStateException("This upload session is no longer open");
@@ -283,6 +287,10 @@ public class MediaUploadService {
         if (asset.uploadExpiresAt() == null || !asset.uploadExpiresAt().isAfter(Instant.now())) {
             throw new IllegalStateException("This upload session has expired; start a new upload");
         }
+    }
+
+    private static void requireNotDeleted(AssetRow asset) {
+        if (asset.deletedAt() != null) throw new IllegalStateException("This media asset was deleted");
     }
 
     private UploadSession session(AssetRow asset, List<Integer> uploaded) {
@@ -305,7 +313,7 @@ public class MediaUploadService {
 
     private AssetView view(AssetRow asset, List<MediaAssetStore.JobRow> jobRows, List<String> presentations) {
         JsonNode manifest = null;
-        if ("READY".equals(asset.status()) && asset.manifestJson() != null) {
+        if (asset.deletedAt() == null && "READY".equals(asset.status()) && asset.manifestJson() != null) {
             try {
                 manifest = mapper.readTree(asset.manifestJson());
             } catch (IOException unreadable) {
@@ -332,9 +340,10 @@ public class MediaUploadService {
                         ? "Home / Introduction" : "Home / Projects", "/", 600));
             } catch (IOException ignored) { log.warn("Invalid presentation for {}", asset.id()); }
         }
-        return new AssetView(asset.id(), asset.kind(), asset.status(), asset.title(), asset.originalFilename(),
+        return new AssetView(asset.id(), asset.kind(), asset.deletedAt() == null ? asset.status() : "DELETED", asset.title(), asset.originalFilename(),
                 asset.contentType(), asset.sizeBytes(), asset.sourceVersion(), asset.failureCode(),
-                asset.failureMessage(), manifest, jobs, asset.createdAt(), asset.updatedAt(), probe, usages);
+                asset.failureMessage(), manifest, jobs, asset.createdAt(), asset.updatedAt(), probe, usages,
+                asset.description(), asset.metadataVersion(), asset.deletedAt());
     }
 
     /** Only the file name's last segment, reduced to characters that are safe in an object key. */

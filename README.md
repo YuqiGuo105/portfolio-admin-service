@@ -192,6 +192,17 @@ pipeline is enabled.
 `media-service` with `MEDIA_KAFKA_ENABLED=false MEDIA_HTTP_INTAKE_ENABLED=true`. The same event
 then travels over HTTP; every other step is unchanged.
 
+**Admin MCP management.** All `/api/admin/media` operations require the `ADMIN`
+role. V15 adds independent metadata versions and a logical-deletion timestamp.
+`PUT /api/admin/media/{id}` replaces title/description with `expectedVersion`;
+`GET /api/admin/media/{id}/deletion-check` previews tracked references and jobs;
+`DELETE /api/admin/media/{id}?expectedVersion=N` only removes unused terminal
+assets from the library/public catalog. It retains stored files, cached URLs,
+and audit history. Updates/deletions are transactional and reject stale versions.
+MCP upload receipts omit temporary signed URLs; renew them using the same upload
+session, not a new upload. Deploy this API and migration before the gateway's
+`media.*` catalog. No public MCP media-management tools are exposed.
+
 **Tests.** `MEDIA_TEST_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/<name>_test mvn verify` runs the
 failure-rule tests against a real PostgreSQL, each class in its own throwaway schema. The
 end-to-end tests also need `ffmpeg`, `ffprobe`, `vips` and `vipsheader` on the `PATH` and are skipped

@@ -68,6 +68,6 @@ class MediaUploadValidationTest {
     private MediaAssetStore.AssetRow asset(Instant expiry) {
         return new MediaAssetStore.AssetRow(id, "VIDEO", "UPLOADING", null, "clip.mp4", "video/mp4", 10,
                 "upload", "store-upload", "source", 5L, 2, expiry, 0, null, "v1", null, null, null,
-                Instant.now(), Instant.now(), null);
+                Instant.now(), Instant.now(), null, "", 0, null);
     }
 }

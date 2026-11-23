@@ -5,6 +5,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,8 +24,7 @@ import java.util.UUID;
 
 /**
  * Upload API for images and videos. It sits behind the same admin authentication as every other
- * {@code /api/admin} route; under the existing rules the POST routes need the ADMIN role and the
- * GET routes any admin.
+ * {@code /api/admin} route. All media operations, including reads, require ADMIN.
  */
 @RestController
 @RequestMapping("/api/admin/media")
@@ -34,9 +35,11 @@ public class MediaAdminController {
     }
 
     private final MediaUploadService uploads;
+    private final MediaManagementService management;
 
-    public MediaAdminController(MediaUploadService uploads) {
+    public MediaAdminController(MediaUploadService uploads, MediaManagementService management) {
         this.uploads = uploads;
+        this.management = management;
     }
 
     /** Step 1. Body: filename, contentType, sizeBytes, optional title. Returns one signed URL per part. */
@@ -77,5 +80,24 @@ public class MediaAdminController {
     @GetMapping("/limits")
     public Map<String, Object> limits() {
         return uploads.limits();
+    }
+
+    @PutMapping("/{id}")
+    public AssetView update(@PathVariable UUID id, @RequestBody MediaManagementService.Metadata request,
+                            HttpServletRequest http) {
+        return management.update(id, request, AdminPrincipal.from(http));
+    }
+
+    @GetMapping("/{id}/deletion-check")
+    public MediaManagementService.DeleteCheck deletionCheck(@PathVariable UUID id) {
+        return management.checkDelete(id);
+    }
+
+    @DeleteMapping("/{id}")
+    public MediaManagementService.DeleteResult delete(@PathVariable UUID id, @RequestParam(required = false) Integer expectedVersion,
+                                                      HttpServletRequest http) {
+        if (expectedVersion == null || expectedVersion < 0)
+            throw new IllegalArgumentException("expectedVersion from media.get is required");
+        return management.delete(id, expectedVersion, AdminPrincipal.from(http));
     }
 }

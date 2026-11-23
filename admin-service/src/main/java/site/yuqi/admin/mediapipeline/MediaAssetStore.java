@@ -28,7 +28,7 @@ public class MediaAssetStore {
             long sizeBytes, String uploadId, String storageUploadId, String uploadKey, Long partSizeBytes,
             Integer partCount, Instant uploadExpiresAt, int sourceVersion, String sourceKey, String profileVersion,
             String manifestJson, String failureCode, String failureMessage, Instant createdAt, Instant updatedAt,
-            String probeJson) {
+            String probeJson, String description, int metadataVersion, Instant deletedAt) {
     }
 
     public record JobRow(String jobType, String rendition, String status, int attempt, String lastError,
@@ -43,7 +43,7 @@ public class MediaAssetStore {
             id, kind, status, title, original_filename, content_type, size_bytes, upload_id, storage_upload_id,
             upload_key, part_size_bytes, part_count, upload_expires_at, source_version, source_key,
             profile_version, manifest::text as manifest, failure_code, failure_message, created_at, updated_at,
-            probe::text as probe
+            probe::text as probe, description, metadata_version, deleted_at
             """;
 
     private static final RowMapper<AssetRow> ASSET = (rs, n) -> new AssetRow(
@@ -55,7 +55,9 @@ public class MediaAssetStore {
             rs.getString("source_key"), rs.getString("profile_version"), rs.getString("manifest"),
             rs.getString("failure_code"), rs.getString("failure_message"),
             instant(rs.getObject("created_at", OffsetDateTime.class)),
-            instant(rs.getObject("updated_at", OffsetDateTime.class)), rs.getString("probe"));
+            instant(rs.getObject("updated_at", OffsetDateTime.class)), rs.getString("probe"),
+            rs.getString("description"), rs.getInt("metadata_version"),
+            instant(rs.getObject("deleted_at", OffsetDateTime.class)));
 
     private final JdbcTemplate jdbc;
 
@@ -82,7 +84,7 @@ public class MediaAssetStore {
     }
 
     public List<AssetRow> list(String status, String kind, int limit) {
-        StringBuilder sql = new StringBuilder("select " + COLUMNS + " from media_assets where true");
+        StringBuilder sql = new StringBuilder("select " + COLUMNS + " from media_assets where deleted_at is null");
         List<Object> args = new ArrayList<>();
         if (status != null) {
             sql.append(" and status = ?");
@@ -107,6 +109,46 @@ public class MediaAssetStore {
                 """, (rs, n) -> new JobRow(rs.getString(1), rs.getString(2), rs.getString(3), rs.getInt(4),
                 rs.getString(5), rs.getInt(6), instant(rs.getObject(7, OffsetDateTime.class)),
                 instant(rs.getObject(8, OffsetDateTime.class))), assetId, sourceVersion, assetId);
+    }
+
+    public Optional<AssetRow> lock(UUID id) {
+        return jdbc.query("select " + COLUMNS + " from media_assets where id = ? for update", ASSET, id)
+                .stream().findFirst();
+    }
+
+    public boolean updateMetadata(UUID id, int version, String title, String description) {
+        return jdbc.update("""
+                update media_assets set title = ?, description = ?, metadata_version = metadata_version + 1,
+                       updated_at = now()
+                 where id = ? and metadata_version = ? and deleted_at is null
+                """, title, description, id, version) == 1;
+    }
+
+    public boolean softDelete(UUID id, int version) {
+        return jdbc.update("""
+                update media_assets set deleted_at = now(), metadata_version = metadata_version + 1, updated_at = now()
+                 where id = ? and metadata_version = ? and deleted_at is null and status in ('READY', 'FAILED')
+                """, id, version) == 1;
+    }
+
+    /** Conservative reference checks, including drafts. Never silently detach live content. */
+    public List<String> references(UUID id) {
+        List<String> refs = new ArrayList<>(jdbc.queryForList(
+                "select 'placement:' || placement_key from media_presentations where asset_id = ? and enabled = true",
+                String.class, id));
+        String needle = "%" + id + "%";
+        refs.addAll(jdbc.queryForList("""
+                select 'project:' || id from "Projects" where content ilike ? or image_url ilike ?
+                union all select 'blog:' || id from "Blogs" where content ilike ? or image_url ilike ?
+                union all select 'life-blog:' || id from life_blogs where content ilike ? or image_url ilike ?
+                """, String.class, needle, needle, needle, needle, needle, needle));
+        return refs;
+    }
+
+    public boolean hasActiveJobs(UUID id) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+                "select exists(select 1 from media_jobs where asset_id = ? and status in ('PENDING', 'RUNNING'))",
+                Boolean.class, id));
     }
 
     public List<String> presentations(UUID assetId) {
@@ -154,7 +196,7 @@ public class MediaAssetStore {
                    set status = 'PROCESSING', source_version = source_version + 1, source_key = upload_key,
                        source_etag = ?, source_bytes = ?, profile_version = ?, processing_started_at = now(),
                        storage_upload_id = null, failure_code = null, failure_message = null, updated_at = now()
-                 where id = ? and status = 'UPLOADING' and upload_id = ?
+                 where id = ? and status = 'UPLOADING' and upload_id = ? and deleted_at is null
                 """, etag, bytes, profileVersion, id, uploadId) == 1;
     }
 
@@ -178,7 +220,7 @@ public class MediaAssetStore {
                 update media_assets
                    set status = 'PROCESSING', failure_code = null, failure_message = null,
                        processing_started_at = now(), updated_at = now()
-                 where id = ? and status = 'FAILED' and source_version = ? and source_version > 0
+                 where id = ? and status = 'FAILED' and source_version = ? and source_version > 0 and deleted_at is null
                 """, id, sourceVersion) == 1;
         if (reopened) {
             jdbc.update("""

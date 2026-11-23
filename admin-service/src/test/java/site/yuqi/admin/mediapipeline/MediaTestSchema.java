@@ -43,7 +43,8 @@ final class MediaTestSchema implements AutoCloseable {
         new ResourceDatabasePopulator(new ClassPathResource("db/migration/V11__media_pipeline.sql"),
                 new ClassPathResource("db/migration/V12__durable_media_wake.sql"),
                 new ClassPathResource("db/migration/V13__media_presentations.sql"),
-                new ClassPathResource("db/migration/V14__media_public_views_read_only.sql")).execute(dataSource);
+                new ClassPathResource("db/migration/V14__media_public_views_read_only.sql"),
+                new ClassPathResource("db/migration/V15__media_management.sql")).execute(dataSource);
     }
 
     int count(String sql, Object... args) {

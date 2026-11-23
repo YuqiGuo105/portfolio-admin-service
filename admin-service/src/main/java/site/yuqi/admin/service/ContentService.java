@@ -48,6 +48,7 @@ public class ContentService {
     private final IndexEventPublisher indexEventPublisher;
     private final NotificationEventPublisher notificationEventPublisher;
     private final OperationEventPublisher operationEventPublisher;
+    private final org.springframework.beans.factory.ObjectProvider<site.yuqi.admin.mediapipeline.MediaArticlePolicy> mediaPolicy;
 
     // ----- READS -----------------------------------------------------------
 
@@ -99,7 +100,8 @@ public class ContentService {
     public NormalizedContent update(SourceType type, String sourceId, Map<String, Object> input,
                                     boolean publish, String actor, String changeNote) {
         ContentAdapter adapter = adapters.get(type);
-        NormalizedContent before = getOrThrow(type, sourceId);
+        NormalizedContent before = adapter.getForUpdate(sourceId)
+                .orElseThrow(() -> new NoSuchElementException(type + " " + sourceId + " not found"));
         Map<String, Object> beforeSnap = adapter.toSnapshot(before);
 
         NormalizedContent after = adapter.update(sourceId, input);
@@ -181,6 +183,12 @@ public class ContentService {
                                           NotificationAudience audience) {
         SourceType type = content.getSourceType();
         String sourceId = content.getSourceId();
+
+        if (content.getContent() != null && content.getContent().toLowerCase(java.util.Locale.ROOT).contains("data-media-id")) {
+            var policy = mediaPolicy == null ? null : mediaPolicy.getIfAvailable();
+            if (policy == null) throw new IllegalStateException("Media validation is unavailable; publication was not accepted");
+            policy.validatePublication(content.getContent());
+        }
 
         ContentVersion version;
         if (existingVersionForCreate != null) {

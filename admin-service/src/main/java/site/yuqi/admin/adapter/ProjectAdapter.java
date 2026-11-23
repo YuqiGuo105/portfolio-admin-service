@@ -39,6 +39,11 @@ public class ProjectAdapter implements ContentAdapter {
     }
 
     @Override
+    public Optional<NormalizedContent> getForUpdate(String sourceId) {
+        return repository.findForUpdate(UUID.fromString(sourceId)).map(this::normalize);
+    }
+
+    @Override
     public NormalizedContent create(Map<String, Object> input) {
         Project row = Project.builder()
                 .id(UUID.randomUUID())

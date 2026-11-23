@@ -55,7 +55,7 @@ public class McpOperationService {
         if (!token.equals(row.get("lease_token"))) throw new IllegalStateException("STALE_OPERATION_LEASE");
         if (!"RUNNING".equals(row.get("state"))) return view(row);
         jdbc.update("update mcp_operations set state=?,http_status=?,response_json=?,updated_at=now() where operation_id=?",
-                state, status, encode(response), id);
+                state, status, encode(storedResponse((String) row.get("tool"), response)), id);
         transition(id, state, ((Number) row.get("attempt")).intValue());
         return view(locked(id, principal));
     }
@@ -116,6 +116,22 @@ public class McpOperationService {
     private static void require(String value, int max) {
         if (value == null || value.isBlank() || value.length()>max || value.indexOf('\0')>=0)
             throw new IllegalArgumentException("Invalid operation identity");
+    }
+
+    /** Upload URLs are short-lived capabilities, not durable audit data. */
+    static Map<String, Object> storedResponse(String tool, Map<String, Object> response) {
+        if (!Set.of("media.start_upload", "media.resume_upload").contains(tool) || response == null) return response;
+        Map<String, Object> safe = new LinkedHashMap<>();
+        for (String key : List.of("assetId", "uploadId", "partSizeBytes", "partCount", "uploadedParts",
+                "expiresAt", "filename", "contentType", "sizeBytes", "code", "retryable", "safeToRetry",
+                "ambiguousOutcome", "retryAfterMs", "downstreamStatus", "tool")) {
+            if (response.containsKey(key)) safe.put(key, response.get(key));
+        }
+        safe.put("signedUrlsOmitted", true);
+        safe.put("nextAction", safe.containsKey("assetId") && safe.containsKey("uploadId")
+                ? "Use media.resume_upload with a new idempotency key for fresh signed part URLs."
+                : "Inspect operation status before retrying; no upload session was confirmed by this receipt.");
+        return safe;
     }
     private String encode(Object value) {
         try { return mapper.writeValueAsString(value); }

@@ -73,4 +73,25 @@ class McpOperationServiceTest {
         assertThatThrownBy(() -> tx.execute(s -> service.claim("actor","test.write","",HASH))).isInstanceOf(IllegalArgumentException.class);
         assertThat(jdbc.queryForObject("select count(*) from mcp_operations",Integer.class)).isZero();
     }
+
+    @Test void uploadReceiptSurvivesRestartWithoutPersistingSignedCapabilities() {
+        for (String tool : List.of("media.start_upload", "media.resume_upload")) {
+            var claim = tx.execute(s -> service.claim("actor", tool, "upload-intent", HASH));
+            UUID id = UUID.fromString((String) claim.get("operationId"));
+            UUID token = UUID.fromString((String) claim.get("leaseToken"));
+            var response = Map.<String, Object>of("assetId", "asset-123", "uploadId", "upload-123",
+                    "parts", List.of(Map.of("url", "https://storage.example/part?signature=private-test-value")),
+                    "futureSensitiveField", "private-test-value");
+            tx.execute(s -> service.complete(id, "actor", token, "SUCCEEDED", 201, response));
+            service = new McpOperationService(jdbc, new ObjectMapper());
+            var replay = tx.execute(s -> service.claim("actor", tool, "upload-intent", HASH));
+            assertThat(replay).containsEntry("dispatch", false);
+            var receipt = (Map<?, ?>) replay.get("response");
+            assertThat(receipt.get("assetId")).isEqualTo("asset-123");
+            assertThat(receipt.get("signedUrlsOmitted")).isEqualTo(true);
+            assertThat(receipt.containsKey("parts")).isFalse();
+            assertThat(jdbc.queryForObject("select response_json from mcp_operations where operation_id=?", String.class, id))
+                    .doesNotContain("private-test-value", "signature", "futureSensitiveField");
+        }
+    }
 }

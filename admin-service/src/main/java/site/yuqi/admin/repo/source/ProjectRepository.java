@@ -11,6 +11,10 @@ import java.util.UUID;
 
 public interface ProjectRepository extends JpaRepository<Project, UUID> {
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Project p where p.id = :id")
+    java.util.Optional<Project> findForUpdate(@Param("id") UUID id);
+
     @Query("""
         select p from Project p
         where (cast(:keyword as string) is null or
