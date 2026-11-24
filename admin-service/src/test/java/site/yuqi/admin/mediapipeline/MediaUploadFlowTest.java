@@ -100,6 +100,8 @@ class MediaUploadFlowTest {
         assertThat(session.parts().get(0).url()).startsWith(s3.endpoint() + "/portfolio-media-originals/originals/"
                 + session.assetId() + "/" + session.uploadId() + "/My_Demo__final_.mp4?").contains("X-Amz-Signature=");
         assertThat(db.text("select status from media_assets where id = ?", session.assetId())).isEqualTo("UPLOADING");
+        assertThat(assets.find(session.assetId()).orElseThrow().originalStorageEndpoint()).isEqualTo(s3.endpoint());
+        assertThat(assets.find(session.assetId()).orElseThrow().originalStorageBucket()).isEqualTo("portfolio-media-originals");
 
         put(session, 1, Arrays.copyOfRange(file, 0, PART));
         put(session, 2, Arrays.copyOfRange(file, PART, file.length));
@@ -107,6 +109,7 @@ class MediaUploadFlowTest {
 
         assertThat(view.status()).isEqualTo("PROCESSING");
         assertThat(view.sourceVersion()).isEqualTo(1);
+        assertThat(assets.find(session.assetId()).orElseThrow().originalStorageGeneration()).isEqualTo("1");
         String key = db.text("select source_key from media_assets where id = ?", session.assetId());
         assertThat(s3.objects.get("/portfolio-media-originals/" + key)).isEqualTo(file);
         assertThat(db.text("select created_by || ' ' || profile_version || ' ' || source_bytes from media_assets where id = ?",
@@ -121,6 +124,31 @@ class MediaUploadFlowTest {
         assertThat(payload.path("sourceKey").asText()).isEqualTo(key);
         assertThat(payload.path("profileVersion").asText()).isEqualTo("v1");
         assertThat(payload.has("indexingJobId")).as("the indexer tells media events apart by this").isFalse();
+    }
+
+    @Test
+    void aLegacyUploadCompletesWithReceiptsWithoutInventingAStorageBinding() throws Exception {
+        UploadSession session = startAndUpload(100);
+        db.jdbc.update("update media_assets set original_storage_endpoint = null, original_storage_bucket = null where id = ?",
+                session.assetId());
+        assertThat(uploads.complete(session.assetId(), session.uploadId()).status()).isEqualTo("PROCESSING");
+        var row = assets.find(session.assetId()).orElseThrow();
+        assertThat(row.originalStorageEndpoint()).isNull();
+        assertThat(row.originalStorageBucket()).isNull();
+        assertThat(row.originalStorageGeneration()).isNull();
+        assertThat(row.sourceEtag()).isEqualTo("joined");
+        assertThat(row.sourceBytes()).isEqualTo(100L);
+    }
+
+    @Test
+    void uploadCompletionRefusesAChangedStorageBindingBeforeNetworkAccess() throws Exception {
+        UploadSession session = startAndUpload(100);
+        build(Map.of("portfolio.media-pipeline.storage.originals-bucket", "wrong-private-bucket"));
+        int before = s3.requests.size();
+        assertThatThrownBy(() -> uploads.complete(session.assetId(), session.uploadId()))
+                .hasMessageContaining("storage configuration changed");
+        assertThat(s3.requests).hasSize(before);
+        assertThat(assets.find(session.assetId()).orElseThrow().status()).isEqualTo("UPLOADING");
     }
 
     @Test

@@ -56,7 +56,8 @@ public class MediaManagementService {
         var refs = assets.references(id);
         boolean jobs = assets.hasActiveJobs(id);
         boolean terminal = List.of("READY", "FAILED").contains(current.status());
-        return new DeleteCheck(id, current.metadataVersion(), current.deletedAt() == null && terminal && !jobs && refs.isEmpty(),
+        boolean originalPending = List.of("DELETING", "DELETE_FAILED").contains(current.originalStatus());
+        return new DeleteCheck(id, current.metadataVersion(), current.deletedAt() == null && terminal && !jobs && refs.isEmpty() && !originalPending,
                 refs, jobs, current.deletedAt() == null ? current.status() : "DELETED");
     }
 
@@ -64,6 +65,8 @@ public class MediaManagementService {
         return tx.execute(transaction -> {
             var current = lock(id);
             requireVersion(current, expectedVersion);
+            if (List.of("DELETING", "DELETE_FAILED").contains(current.originalStatus()))
+                throw new IllegalStateException("Resolve the original deletion before deleting this asset");
             var check = checkDelete(id);
             if (!check.deletable())
                 throw new IllegalStateException("Media is in use or processing. Inspect deletion-check and remove references first");

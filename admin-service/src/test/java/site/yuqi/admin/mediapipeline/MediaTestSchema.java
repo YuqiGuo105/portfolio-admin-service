@@ -46,6 +46,12 @@ final class MediaTestSchema implements AutoCloseable {
                 new ClassPathResource("db/migration/V14__media_public_views_read_only.sql"),
                 new ClassPathResource("db/migration/V15__media_management.sql"),
                 new ClassPathResource("db/migration/V16__media_presentation_jobs.sql")).execute(dataSource);
+        try {
+            jdbc.execute(new ClassPathResource("db/migration/V17__media_original_deletion.sql")
+                    .getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException error) {
+            throw new java.io.UncheckedIOException(error);
+        }
     }
 
     int count(String sql, Object... args) {

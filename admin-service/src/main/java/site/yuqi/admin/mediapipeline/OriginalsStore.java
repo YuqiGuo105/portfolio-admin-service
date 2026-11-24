@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,7 +34,7 @@ public class OriginalsStore {
     public record Part(int number, String etag, long size) {
     }
 
-    public record StoredObject(long size, String etag) {
+    public record StoredObject(long size, String etag, String generation) {
     }
 
     private static final Pattern UPLOAD_ID = Pattern.compile("<UploadId>([^<]+)</UploadId>");
@@ -50,12 +51,14 @@ public class OriginalsStore {
             .build();
     private final URI endpoint;
     private final String bucket;
+    private final String publicBucket;
     private final S3Signer signer;
 
     public OriginalsStore(MediaPipelineProperties properties) {
         MediaPipelineProperties.Storage storage = properties.storage();
         this.endpoint = URI.create(storage.endpoint().replaceAll("/+$", ""));
         this.bucket = storage.originalsBucket();
+        this.publicBucket = storage.publicBucket();
         this.signer = new S3Signer(storage.accessKey(), storage.secretKey(), storage.region());
     }
 
@@ -132,7 +135,81 @@ public class OriginalsStore {
         requireSuccess(response, "head", key);
         return Optional.of(new StoredObject(
                 response.headers().firstValueAsLong("Content-Length").orElse(-1),
-                response.headers().firstValue("ETag").orElse("").replace("\"", "")));
+                response.headers().firstValue("ETag").orElse("").replace("\"", ""),
+                response.headers().firstValue("x-goog-generation").orElse(null)));
+    }
+
+    public String storageEndpoint() { return S3Signer.origin(endpoint); }
+    public String storageBucket() { return bucket; }
+
+    public String deletionBucket() {
+        if (bucket == null || !bucket.matches("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+                || bucket.equals(publicBucket)) {
+            throw new IllegalStateException("A separate private originals bucket is required");
+        }
+        return bucket;
+    }
+
+    /** No arbitrary paths, prefixes, public buckets or bulk deletion are accepted. */
+    public void validateDeletion(UUID assetId, String expectedBucket, String key) {
+        if (!deletionBucket().equals(expectedBucket) || key == null
+                || !key.matches("originals/" + assetId + "/[a-f0-9]{20}/[A-Za-z0-9._-]{1,120}")
+                || key.endsWith("/.") || key.endsWith("/..")) {
+            throw new IllegalStateException("Original storage ownership could not be verified");
+        }
+    }
+
+    /** Pin the observed GCS generation in the durable intent; never adopt a replacement on retry. */
+    public String deletionGeneration(UUID assetId, String expectedBucket, String key) throws IOException {
+        validateDeletion(assetId, expectedBucket, key);
+        HttpResponse<String> before = send("HEAD", key, Map.of(), Map.of(), "");
+        if (before.statusCode() == 404) return "0";
+        requireSuccess(before, "head original", key);
+        return generation(before);
+    }
+
+    /** Legacy ownership needs an existing object matching the original upload receipt, never just a key. */
+    public String verifyLegacyOriginal(UUID assetId, String key, long expectedBytes, String expectedEtag) throws IOException {
+        validateDeletion(assetId, deletionBucket(), key);
+        if (expectedBytes <= 0 || expectedEtag == null || expectedEtag.isBlank())
+            throw new IllegalStateException("The original upload receipt is incomplete");
+        HttpResponse<String> response = send("HEAD", key, Map.of(), Map.of(), "");
+        requireSuccess(response, "verify original receipt", key);
+        String etag = response.headers().firstValue("ETag").orElse("").replace("\"", "");
+        if (!expectedEtag.equals(etag) || response.headers().firstValueAsLong("Content-Length").orElse(-1) != expectedBytes)
+            throw new IllegalStateException("The stored original does not match its upload receipt");
+        return generation(response);
+    }
+
+    private static String generation(HttpResponse<String> before) throws IOException {
+        if (before.headers().firstValue("x-amz-version-id").isPresent()) {
+            throw new IOException("Versioned originals require a separate permanent-deletion workflow");
+        }
+        String generation = before.headers().firstValue("x-goog-generation").orElse("");
+        if (!generation.matches("[1-9][0-9]*"))
+            throw new IOException("Original storage does not support the required conditional deletion contract");
+        return generation;
+    }
+
+    /** Remove only the pinned live GCS object. Provider retention is separate from live-object absence. */
+    public void deleteOriginal(UUID assetId, String expectedBucket, String key, String expectedGeneration) throws IOException {
+        if (expectedGeneration == null || !expectedGeneration.matches("[1-9][0-9]*"))
+            throw new IllegalStateException("A persisted original generation is required");
+        String currentGeneration = deletionGeneration(assetId, expectedBucket, key);
+        if ("0".equals(currentGeneration)) return; // a previous delete succeeded before its DB commit
+        if (!currentGeneration.equals(expectedGeneration)) throw new IOException("The original generation changed");
+        HttpResponse<String> response = send("DELETE", key, Map.of(),
+                Map.of("x-goog-if-generation-match", expectedGeneration), "");
+        if (response.statusCode() != 200 && response.statusCode() != 204 && response.statusCode() != 404) {
+            throw new IOException("Original deletion failed: HTTP " + response.statusCode());
+        }
+        if (response.headers().firstValue("x-amz-delete-marker").map(Boolean::parseBoolean).orElse(false)
+                || (response.body() != null && response.body().contains("<Error>"))) {
+            throw new IOException("Object storage did not confirm removal of the live original");
+        }
+        if (send("HEAD", key, Map.of(), Map.of(), "").statusCode() != 404) {
+            throw new IOException("Object storage did not confirm the live original is absent");
+        }
     }
 
     private HttpResponse<String> send(String method, String key, Map<String, String> query,
@@ -151,7 +228,7 @@ public class OriginalsStore {
                         ? HttpRequest.BodyPublishers.noBody()
                         : HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
         headers.forEach(request::header);
-        signer.sign(method, endpoint, path, query, Map.of(), S3Signer.sha256Hex(body), Instant.now())
+        signer.sign(method, endpoint, path, query, headers, S3Signer.sha256Hex(body), Instant.now())
                 .forEach(request::header);
         try {
             return http.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
