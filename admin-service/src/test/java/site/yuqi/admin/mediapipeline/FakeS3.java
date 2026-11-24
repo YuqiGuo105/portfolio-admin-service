@@ -28,6 +28,7 @@ final class FakeS3 implements AutoCloseable {
     record Request(String method, String path, String query, String authorization, String generationCondition) { }
     final List<Request> requests = new CopyOnWriteArrayList<>();
     volatile int deleteStatus = 204;
+    volatile String deleteErrorBody = "";
     volatile boolean versioned;
     volatile String generation = "1";
     volatile boolean retainOnDelete;
@@ -59,6 +60,16 @@ final class FakeS3 implements AutoCloseable {
             Map<String, String> query = query(exchange.getRequestURI().getRawQuery());
             byte[] body = exchange.getRequestBody().readAllBytes();
             String uploadId = query.get("uploadId");
+
+            // GCS rejects mixing the Google precondition with AWS signing headers.
+            boolean googleHeaders = exchange.getRequestHeaders().keySet().stream()
+                    .anyMatch(name -> name.toLowerCase(java.util.Locale.ROOT).startsWith("x-goog-"));
+            boolean amazonHeaders = exchange.getRequestHeaders().keySet().stream()
+                    .anyMatch(name -> name.toLowerCase(java.util.Locale.ROOT).startsWith("x-amz-"));
+            if (googleHeaders && amazonHeaders) {
+                respond(exchange, 400, "<Error><Code>ExcessHeaderValues</Code></Error>");
+                return;
+            }
 
             if (method.equals("POST") && query.containsKey("uploads")) {
                 String id = "upload-" + nextId++;
@@ -93,7 +104,7 @@ final class FakeS3 implements AutoCloseable {
                     respond(exchange, 412, ""); return;
                 }
                 if (deleteStatus == 204 && !retainOnDelete) objects.remove(key);
-                respond(exchange, deleteStatus, "");
+                respond(exchange, deleteStatus, deleteErrorBody);
             } else if (method.equals("PUT") && query.isEmpty()) {
                 objects.put(key, body);
                 respond(exchange, 200, "");

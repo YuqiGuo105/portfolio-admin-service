@@ -37,6 +37,23 @@ public class OriginalsStore {
     public record StoredObject(long size, String etag, String generation) {
     }
 
+    /** Safe diagnostics only: never retain provider response bodies, object paths or credentials. */
+    public static final class DeletionRequestException extends IOException {
+        private final int status;
+        private final String providerCode;
+
+        DeletionRequestException(HttpResponse<String> response) {
+            super("Original deletion failed: HTTP " + response.statusCode());
+            status = response.statusCode();
+            Matcher code = Pattern.compile("<Code>([A-Za-z0-9_.-]{1,80})</Code>")
+                    .matcher(response.body() == null ? "" : response.body());
+            providerCode = code.find() ? code.group(1) : "Unknown";
+        }
+
+        public int status() { return status; }
+        public String providerCode() { return providerCode; }
+    }
+
     private static final Pattern UPLOAD_ID = Pattern.compile("<UploadId>([^<]+)</UploadId>");
     private static final Pattern PART = Pattern.compile(
             "<Part>.*?<PartNumber>(\\d+)</PartNumber>.*?</Part>", Pattern.DOTALL);
@@ -201,7 +218,7 @@ public class OriginalsStore {
         HttpResponse<String> response = send("DELETE", key, Map.of(),
                 Map.of("x-goog-if-generation-match", expectedGeneration), "");
         if (response.statusCode() != 200 && response.statusCode() != 204 && response.statusCode() != 404) {
-            throw new IOException("Original deletion failed: HTTP " + response.statusCode());
+            throw new DeletionRequestException(response);
         }
         if (response.headers().firstValue("x-amz-delete-marker").map(Boolean::parseBoolean).orElse(false)
                 || (response.body() != null && response.body().contains("<Error>"))) {
