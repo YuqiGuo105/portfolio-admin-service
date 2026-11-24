@@ -2,6 +2,8 @@ package site.yuqi.admin.mediapipeline;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -21,6 +23,7 @@ import java.util.UUID;
 @Service
 @ConditionalOnProperty(name = "portfolio.media-pipeline.enabled", havingValue = "true")
 public class MediaOriginalDeletionService {
+    private static final Logger log = LoggerFactory.getLogger(MediaOriginalDeletionService.class);
     public record Check(UUID id, int metadataVersion, boolean deletable, List<String> reasons, String originalStatus) { }
 
     public static final class StorageDeletionException extends RuntimeException {
@@ -96,6 +99,12 @@ public class MediaOriginalDeletionService {
             try {
                 originals.deleteOriginal(id, intent.storageBucket(), intent.sourceKey(), intent.storageGeneration());
             } catch (IOException storageFailure) {
+                if (storageFailure instanceof OriginalsStore.DeletionRequestException rejected) {
+                    log.warn("Original deletion rejected: asset={} status={} providerCode={}",
+                            id, rejected.status(), rejected.providerCode());
+                } else {
+                    log.warn("Original deletion unconfirmed: asset={} errorType={}", id, storageFailure.getClass().getSimpleName());
+                }
                 assets.setOriginalStatus(id, "DELETE_FAILED");
                 audit(actor, AuditAction.UPDATE, row, "DELETE_FAILED");
                 return null;

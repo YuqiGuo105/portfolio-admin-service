@@ -37,10 +37,14 @@ class OriginalsStoreDeletionTest {
             assertThat(storage.requests).allSatisfy(request -> {
                 assertThat(request.path()).isEqualTo("/" + BUCKET + "/" + key);
                 assertThat(request.query()).isNull();
-                assertThat(request.authorization()).startsWith("AWS4-HMAC-SHA256 ");
                 if (request.method().equals("DELETE")) {
+                    assertThat(request.authorization()).startsWith("GOOG4-HMAC-SHA256 ");
+                    assertThat(request.authorization()).contains("/auto/storage/goog4_request");
+                    assertThat(request.authorization()).doesNotContain("x-amz-");
                     assertThat(request.generationCondition()).isEqualTo("1");
                     assertThat(request.authorization()).contains("x-goog-if-generation-match");
+                } else {
+                    assertThat(request.authorization()).startsWith("AWS4-HMAC-SHA256 ");
                 }
             });
         }
@@ -88,6 +92,22 @@ class OriginalsStoreDeletionTest {
             var originals = new OriginalsStore(properties(storage.endpoint()));
             assertThatThrownBy(() -> originals.deleteOriginal(id, BUCKET, key(id), "1")).isInstanceOf(IOException.class);
             assertThat(storage.requests).extracting(FakeS3.Request::method).containsExactly("HEAD");
+            assertThat(storage.objects).hasSize(1);
+        }
+    }
+
+    @Test void providerRejectionsKeepSafeDiagnosticsWithoutTheResponseBody() throws Exception {
+        try (var storage = new FakeS3()) {
+            UUID id = UUID.randomUUID();
+            storage.objects.put("/" + BUCKET + "/" + key(id), new byte[]{1});
+            storage.deleteStatus = 400;
+            storage.deleteErrorBody = "<Error><Code>ExcessHeaderValues</Code><Details>private request data</Details></Error>";
+            var originals = new OriginalsStore(properties(storage.endpoint()));
+            var failure = catchThrowableOfType(() -> originals.deleteOriginal(id, BUCKET, key(id), "1"),
+                    OriginalsStore.DeletionRequestException.class);
+            assertThat(failure.status()).isEqualTo(400);
+            assertThat(failure.providerCode()).isEqualTo("ExcessHeaderValues");
+            assertThat(failure.getMessage()).doesNotContain("private request data", key(id));
             assertThat(storage.objects).hasSize(1);
         }
     }

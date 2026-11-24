@@ -16,10 +16,10 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * AWS Signature Version 4, the request signing every S3-compatible store accepts:
+ * V4 request signing for S3-compatible stores, with native Google signing for x-goog headers:
  * Amazon S3, Google Cloud Storage (XML API with HMAC keys), Cloudflare R2, MinIO.
  *
- * <p>Kept dependency-free on purpose. The same class exists in the Media Service; the two
+ * <p>Kept dependency-free on purpose. The Media Service has its own S3-only signer; the two
  * services share a storage contract, not a library.
  */
 public final class S3Signer {
@@ -82,14 +82,20 @@ public final class S3Signer {
      */
     public Map<String, String> sign(String method, URI endpoint, String path, Map<String, String> query,
                                     Map<String, String> headers, String payloadHash, Instant now) {
+        // GCS rejects x-goog preconditions combined with x-amz authentication headers.
+        boolean google = headers.keySet().stream().anyMatch(name -> name.toLowerCase(Locale.ROOT).startsWith("x-goog-"));
+        if (google && headers.keySet().stream().anyMatch(name -> name.toLowerCase(Locale.ROOT).startsWith("x-amz-")))
+            throw new IllegalArgumentException("Google and Amazon extension headers cannot be mixed");
+        String headerPrefix = google ? "x-goog-" : "x-amz-";
+        String algorithm = google ? "GOOG4-HMAC-SHA256" : ALGORITHM;
         String amzDate = AMZ_DATE.format(now);
-        String scope = DATE.format(now) + "/" + region + "/s3/aws4_request";
+        String scope = DATE.format(now) + "/" + region + (google ? "/storage/goog4_request" : "/s3/aws4_request");
 
         TreeMap<String, String> signed = new TreeMap<>();
         headers.forEach((name, value) -> signed.put(name.toLowerCase(Locale.ROOT), value.trim()));
         signed.put("host", hostHeader(endpoint));
-        signed.put("x-amz-content-sha256", payloadHash);
-        signed.put("x-amz-date", amzDate);
+        signed.put(headerPrefix + "content-sha256", payloadHash);
+        signed.put(headerPrefix + "date", amzDate);
 
         StringBuilder canonicalHeaders = new StringBuilder();
         signed.forEach((name, value) -> canonicalHeaders.append(name).append(':').append(value).append('\n'));
@@ -101,22 +107,26 @@ public final class S3Signer {
                 + canonicalHeaders + "\n"
                 + signedHeaders + "\n"
                 + payloadHash;
-        String signature = signature(canonicalRequest, amzDate, scope, now);
+        String signature = signature(canonicalRequest, amzDate, scope, now, google);
 
         Map<String, String> out = new LinkedHashMap<>();
-        out.put("x-amz-content-sha256", payloadHash);
-        out.put("x-amz-date", amzDate);
-        out.put("Authorization", ALGORITHM + " Credential=" + accessKey + "/" + scope
+        out.put(headerPrefix + "content-sha256", payloadHash);
+        out.put(headerPrefix + "date", amzDate);
+        out.put("Authorization", algorithm + " Credential=" + accessKey + "/" + scope
                 + ", SignedHeaders=" + signedHeaders + ", Signature=" + signature);
         return out;
     }
 
     private String signature(String canonicalRequest, String amzDate, String scope, Instant now) {
-        String stringToSign = ALGORITHM + "\n" + amzDate + "\n" + scope + "\n" + sha256Hex(canonicalRequest);
-        byte[] key = hmac(("AWS4" + secretKey).getBytes(StandardCharsets.UTF_8), DATE.format(now));
+        return signature(canonicalRequest, amzDate, scope, now, false);
+    }
+
+    private String signature(String canonicalRequest, String amzDate, String scope, Instant now, boolean google) {
+        String stringToSign = (google ? "GOOG4-HMAC-SHA256" : ALGORITHM) + "\n" + amzDate + "\n" + scope + "\n" + sha256Hex(canonicalRequest);
+        byte[] key = hmac(((google ? "GOOG4" : "AWS4") + secretKey).getBytes(StandardCharsets.UTF_8), DATE.format(now));
         key = hmac(key, region);
-        key = hmac(key, "s3");
-        key = hmac(key, "aws4_request");
+        key = hmac(key, google ? "storage" : "s3");
+        key = hmac(key, google ? "goog4_request" : "aws4_request");
         return HexFormat.of().formatHex(hmac(key, stringToSign));
     }
 
