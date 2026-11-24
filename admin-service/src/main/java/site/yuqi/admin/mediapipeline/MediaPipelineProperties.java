@@ -23,7 +23,8 @@ public record MediaPipelineProperties(
             @DefaultValue("auto") String region,
             @DefaultValue("") String accessKey,
             @DefaultValue("") String secretKey,
-            @DefaultValue("portfolio-media-originals") String originalsBucket) {
+            @DefaultValue("portfolio-media-originals") String originalsBucket,
+            @DefaultValue("portfolio-media-public") String publicBucket) {
     }
 
     public record Upload(

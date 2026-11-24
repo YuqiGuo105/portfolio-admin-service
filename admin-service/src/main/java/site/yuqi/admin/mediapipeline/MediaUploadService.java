@@ -59,7 +59,7 @@ public class MediaUploadService {
                             long sizeBytes, int sourceVersion, String failureCode, String failureMessage,
                             JsonNode manifest, List<JobView> jobs, Instant createdAt, Instant updatedAt,
                             JsonNode probe, List<UsageView> usages, String description, int metadataVersion,
-                            Instant deletedAt) {
+                            Instant deletedAt, String originalStatus, Instant originalDeletedAt) {
     }
 
     private static final Logger log = LoggerFactory.getLogger(MediaUploadService.class);
@@ -125,7 +125,8 @@ public class MediaUploadService {
         }
         try {
             assets.insertUploading(assetId, kind, title, filename, contentType, request.sizeBytes(),
-                    uploadId, storageUploadId, key, partSize, partCount, limits.sessionTtlSeconds(), actor);
+                    uploadId, storageUploadId, key, partSize, partCount, limits.sessionTtlSeconds(), actor,
+                    originals.storageEndpoint(), originals.storageBucket());
         } catch (RuntimeException failed) {
             try {
                 originals.abortMultipartUpload(key, storageUploadId);
@@ -164,6 +165,7 @@ public class MediaUploadService {
         }
         if (!"UPLOADING".equals(asset.status())) return view(asset);   // already confirmed: a retried request
         requireNotExpired(asset);
+        requireStorageBinding(asset);
 
         OriginalsStore.StoredObject stored;
         try {
@@ -175,7 +177,8 @@ public class MediaUploadService {
         OperationContext context = OperationContext.current();
         String profile = properties.profileVersion();
         Boolean bound = tx.execute(status -> {
-            if (!assets.bindSource(assetId, uploadId, stored.etag(), stored.size(), profile)) return false;
+            String generation = asset.originalStorageEndpoint() == null ? null : stored.generation();
+            if (!assets.bindSource(assetId, uploadId, stored.etag(), stored.size(), profile, generation)) return false;
             AssetRow current = assets.find(assetId).orElseThrow();
             announce(current, context);
             return true;
@@ -203,6 +206,8 @@ public class MediaUploadService {
     public AssetView retry(UUID assetId) {
         AssetRow asset = assets.find(assetId).orElseThrow(() -> new NoSuchElementException("No media asset " + assetId));
         requireNotDeleted(asset);
+        if (!"AVAILABLE".equals(asset.originalStatus()))
+            throw new IllegalStateException("The original is unavailable; upload a new asset instead");
         if (!"FAILED".equals(asset.status()) || asset.sourceVersion() < 1) {
             throw new IllegalStateException("Only an asset whose processing failed can be retried; upload again instead");
         }
@@ -280,7 +285,15 @@ public class MediaUploadService {
             throw new IllegalStateException("This upload session is no longer open");
         }
         requireNotExpired(asset);
+        requireStorageBinding(asset);
         return asset;
+    }
+
+    private void requireStorageBinding(AssetRow asset) {
+        // Legacy sessions may finish, but are not made deletion-eligible by guessing their original location.
+        if (asset.originalStorageEndpoint() != null && (!asset.originalStorageEndpoint().equals(originals.storageEndpoint())
+                || !java.util.Objects.equals(asset.originalStorageBucket(), originals.storageBucket())))
+            throw new IllegalStateException("Original storage configuration changed since upload");
     }
 
     private static void requireNotExpired(AssetRow asset) {
@@ -343,7 +356,7 @@ public class MediaUploadService {
         return new AssetView(asset.id(), asset.kind(), asset.deletedAt() == null ? asset.status() : "DELETED", asset.title(), asset.originalFilename(),
                 asset.contentType(), asset.sizeBytes(), asset.sourceVersion(), asset.failureCode(),
                 asset.failureMessage(), manifest, jobs, asset.createdAt(), asset.updatedAt(), probe, usages,
-                asset.description(), asset.metadataVersion(), asset.deletedAt());
+                asset.description(), asset.metadataVersion(), asset.deletedAt(), asset.originalStatus(), asset.originalDeletedAt());
     }
 
     /** Only the file name's last segment, reduced to characters that are safe in an object key. */

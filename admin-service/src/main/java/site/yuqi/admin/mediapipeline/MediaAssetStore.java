@@ -28,8 +28,14 @@ public class MediaAssetStore {
             long sizeBytes, String uploadId, String storageUploadId, String uploadKey, Long partSizeBytes,
             Integer partCount, Instant uploadExpiresAt, int sourceVersion, String sourceKey, String profileVersion,
             String manifestJson, String failureCode, String failureMessage, Instant createdAt, Instant updatedAt,
-            String probeJson, String description, int metadataVersion, Instant deletedAt) {
+            String probeJson, String description, int metadataVersion, Instant deletedAt,
+            String originalStatus, Instant originalDeletedAt, String originalStorageEndpoint,
+            String originalStorageBucket, String originalStorageGeneration, String sourceEtag, Long sourceBytes) {
     }
+
+    public record OriginalDeletion(UUID assetId, int sourceVersion, String sourceKey, String storageBucket,
+                                   String storageEndpoint, String storageGeneration,
+                                   int expectedMetadataVersion, String requestedBy) { }
 
     public record JobRow(String jobType, String rendition, String status, int attempt, String lastError,
                          int maxAttempts, Instant startedAt, Instant finishedAt) {
@@ -43,7 +49,8 @@ public class MediaAssetStore {
             id, kind, status, title, original_filename, content_type, size_bytes, upload_id, storage_upload_id,
             upload_key, part_size_bytes, part_count, upload_expires_at, source_version, source_key,
             profile_version, manifest::text as manifest, failure_code, failure_message, created_at, updated_at,
-            probe::text as probe, description, metadata_version, deleted_at
+            probe::text as probe, description, metadata_version, deleted_at, original_status, original_deleted_at,
+            original_storage_endpoint, original_storage_bucket, original_storage_generation, source_etag, source_bytes
             """;
 
     private static final RowMapper<AssetRow> ASSET = (rs, n) -> new AssetRow(
@@ -57,7 +64,10 @@ public class MediaAssetStore {
             instant(rs.getObject("created_at", OffsetDateTime.class)),
             instant(rs.getObject("updated_at", OffsetDateTime.class)), rs.getString("probe"),
             rs.getString("description"), rs.getInt("metadata_version"),
-            instant(rs.getObject("deleted_at", OffsetDateTime.class)));
+            instant(rs.getObject("deleted_at", OffsetDateTime.class)), rs.getString("original_status"),
+            instant(rs.getObject("original_deleted_at", OffsetDateTime.class)), rs.getString("original_storage_endpoint"),
+            rs.getString("original_storage_bucket"), rs.getString("original_storage_generation"),
+            rs.getString("source_etag"), (Long) rs.getObject("source_bytes"));
 
     private final JdbcTemplate jdbc;
 
@@ -69,14 +79,15 @@ public class MediaAssetStore {
 
     public void insertUploading(UUID id, String kind, String title, String filename, String contentType,
                                 long sizeBytes, String uploadId, String storageUploadId, String uploadKey,
-                                long partSizeBytes, int partCount, int sessionTtlSeconds, String createdBy) {
+                                long partSizeBytes, int partCount, int sessionTtlSeconds, String createdBy,
+                                String storageEndpoint, String storageBucket) {
         jdbc.update("""
                 insert into media_assets (id, kind, status, title, original_filename, content_type, size_bytes,
                                           upload_id, storage_upload_id, upload_key, part_size_bytes, part_count,
-                                          upload_expires_at, created_by)
-                values (?, ?, 'UPLOADING', ?, ?, ?, ?, ?, ?, ?, ?, ?, now() + make_interval(secs => ?), ?)
+                                          upload_expires_at, created_by, original_storage_endpoint, original_storage_bucket)
+                values (?, ?, 'UPLOADING', ?, ?, ?, ?, ?, ?, ?, ?, ?, now() + make_interval(secs => ?), ?, ?, ?)
                 """, id, kind, title, filename, contentType, sizeBytes, uploadId, storageUploadId, uploadKey,
-                partSizeBytes, partCount, sessionTtlSeconds, createdBy);
+                partSizeBytes, partCount, sessionTtlSeconds, createdBy, storageEndpoint, storageBucket);
     }
 
     public Optional<AssetRow> find(UUID id) {
@@ -128,6 +139,7 @@ public class MediaAssetStore {
         return jdbc.update("""
                 update media_assets set deleted_at = now(), metadata_version = metadata_version + 1, updated_at = now()
                  where id = ? and metadata_version = ? and deleted_at is null and status in ('READY', 'FAILED')
+                   and original_status not in ('DELETING', 'DELETE_FAILED')
                 """, id, version) == 1;
     }
 
@@ -149,6 +161,45 @@ public class MediaAssetStore {
         return Boolean.TRUE.equals(jdbc.queryForObject(
                 "select exists(select 1 from media_jobs where asset_id = ? and status in ('PENDING', 'RUNNING'))",
                 Boolean.class, id));
+    }
+
+    public Optional<OriginalDeletion> originalDeletion(UUID id) {
+        return jdbc.query("""
+                select asset_id, source_version, source_key, storage_bucket, storage_endpoint, storage_generation, expected_metadata_version, requested_by
+                  from media_original_deletions where asset_id = ?
+                """, (rs, n) -> new OriginalDeletion(rs.getObject(1, UUID.class), rs.getInt(2), rs.getString(3),
+                rs.getString(4), rs.getString(5), rs.getString(6), rs.getInt(7), rs.getString(8)), id).stream().findFirst();
+    }
+
+    /** Caller holds the asset lock; intent and status must commit together before storage deletion. */
+    public void beginOriginalDeletion(AssetRow row, String actor) {
+        jdbc.update("""
+                insert into media_original_deletions
+                    (asset_id, source_version, source_key, storage_bucket, storage_endpoint, storage_generation, expected_metadata_version, requested_by)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """, row.id(), row.sourceVersion(), row.sourceKey(), row.originalStorageBucket(), row.originalStorageEndpoint(),
+                row.originalStorageGeneration(), row.metadataVersion(), actor);
+        setOriginalStatus(row.id(), "DELETING");
+    }
+
+    /** Only the deletion transaction may bind a legacy row after verifying its persisted upload receipt. */
+    public void bindLegacyOriginal(UUID id, String endpoint, String bucket, String generation) {
+        int changed = jdbc.update("""
+                update media_assets set original_storage_endpoint = ?, original_storage_bucket = ?, original_storage_generation = ?
+                 where id = ? and original_status = 'AVAILABLE' and original_storage_endpoint is null
+                   and original_storage_bucket is null and original_storage_generation is null
+                """, endpoint, bucket, generation, id);
+        if (changed != 1) throw new IllegalStateException("Original storage binding changed");
+    }
+
+    public void setOriginalStatus(UUID id, String status) {
+        jdbc.update("""
+                update media_assets set original_status = ?, metadata_version = metadata_version + 1,
+                    original_deleted_at = case when ? = 'DELETED' then now() else null end, updated_at = now()
+                 where id = ? and original_status <> ?
+                """, status, status, id, status);
+        if ("DELETED".equals(status))
+            jdbc.update("update media_original_deletions set completed_at = now() where asset_id = ?", id);
     }
 
     public List<String> presentations(UUID assetId) {
@@ -190,14 +241,14 @@ public class MediaAssetStore {
      * the asset moves to PROCESSING. Guarded by status and upload id, so of two concurrent
      * completions for the same upload exactly one wins.
      */
-    public boolean bindSource(UUID id, String uploadId, String etag, long bytes, String profileVersion) {
+    public boolean bindSource(UUID id, String uploadId, String etag, long bytes, String profileVersion, String generation) {
         return jdbc.update("""
                 update media_assets
                    set status = 'PROCESSING', source_version = source_version + 1, source_key = upload_key,
-                       source_etag = ?, source_bytes = ?, profile_version = ?, processing_started_at = now(),
+                       source_etag = ?, source_bytes = ?, profile_version = ?, original_storage_generation = ?, processing_started_at = now(),
                        storage_upload_id = null, failure_code = null, failure_message = null, updated_at = now()
                  where id = ? and status = 'UPLOADING' and upload_id = ? and deleted_at is null
-                """, etag, bytes, profileVersion, id, uploadId) == 1;
+                """, etag, bytes, profileVersion, generation, id, uploadId) == 1;
     }
 
     /** Uploads nobody finished. Returned so the caller can abort them in the store as well. */
@@ -220,7 +271,8 @@ public class MediaAssetStore {
                 update media_assets
                    set status = 'PROCESSING', failure_code = null, failure_message = null,
                        processing_started_at = now(), updated_at = now()
-                 where id = ? and status = 'FAILED' and source_version = ? and source_version > 0 and deleted_at is null
+                 where id = ? and status = 'FAILED' and source_version = ? and source_version > 0
+                   and deleted_at is null and original_status = 'AVAILABLE'
                 """, id, sourceVersion) == 1;
         if (reopened) {
             jdbc.update("""

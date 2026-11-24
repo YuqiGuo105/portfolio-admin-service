@@ -10,8 +10,11 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /**
  * The few S3 calls a multipart upload needs, in memory, on a random local port. It does not check
@@ -22,6 +25,13 @@ final class FakeS3 implements AutoCloseable {
     private final HttpServer server;
     private final Map<String, TreeMap<Integer, byte[]>> uploads = new ConcurrentHashMap<>();
     final Map<String, byte[]> objects = new ConcurrentHashMap<>();
+    record Request(String method, String path, String query, String authorization, String generationCondition) { }
+    final List<Request> requests = new CopyOnWriteArrayList<>();
+    volatile int deleteStatus = 204;
+    volatile boolean versioned;
+    volatile String generation = "1";
+    volatile boolean retainOnDelete;
+    Consumer<String> beforeDelete = key -> { };
     private int nextId = 1;
 
     FakeS3() throws IOException {
@@ -43,6 +53,9 @@ final class FakeS3 implements AutoCloseable {
         try {
             String method = exchange.getRequestMethod();
             String key = exchange.getRequestURI().getPath();
+            requests.add(new Request(method, key, exchange.getRequestURI().getRawQuery(),
+                    exchange.getRequestHeaders().getFirst("Authorization"),
+                    exchange.getRequestHeaders().getFirst("x-goog-if-generation-match")));
             Map<String, String> query = query(exchange.getRequestURI().getRawQuery());
             byte[] body = exchange.getRequestBody().readAllBytes();
             String uploadId = query.get("uploadId");
@@ -74,11 +87,29 @@ final class FakeS3 implements AutoCloseable {
                 respond(exchange, 200, "<CompleteMultipartUploadResult><ETag>&quot;joined&quot;</ETag></CompleteMultipartUploadResult>");
             } else if (method.equals("DELETE") && uploadId != null) {
                 respond(exchange, uploads.remove(uploadId) == null ? 404 : 204, "");
+            } else if (method.equals("DELETE") && query.isEmpty()) {
+                beforeDelete.accept(key);
+                if (!java.util.Objects.equals(generation, exchange.getRequestHeaders().getFirst("x-goog-if-generation-match"))) {
+                    respond(exchange, 412, ""); return;
+                }
+                if (deleteStatus == 204 && !retainOnDelete) objects.remove(key);
+                respond(exchange, deleteStatus, "");
+            } else if (method.equals("PUT") && query.isEmpty()) {
+                objects.put(key, body);
+                respond(exchange, 200, "");
+            } else if (method.equals("GET") && query.isEmpty()) {
+                byte[] object = objects.get(key);
+                if (object == null) { respond(exchange, 404, ""); return; }
+                exchange.sendResponseHeaders(200, object.length);
+                exchange.getResponseBody().write(object);
+                exchange.close();
             } else if (method.equals("HEAD")) {
                 byte[] object = objects.get(key);
                 if (object == null) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
                 exchange.getResponseHeaders().add("ETag", "\"joined\"");
                 exchange.getResponseHeaders().add("Content-Length", Integer.toString(object.length));
+                if (versioned) exchange.getResponseHeaders().add("x-amz-version-id", "stored-version");
+                if (generation != null) exchange.getResponseHeaders().add("x-goog-generation", generation);
                 exchange.sendResponseHeaders(200, -1);
                 exchange.close();
             } else {

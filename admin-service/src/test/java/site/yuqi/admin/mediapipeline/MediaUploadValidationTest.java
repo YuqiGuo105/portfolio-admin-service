@@ -43,7 +43,7 @@ class MediaUploadValidationTest {
     void databaseFailureAbortsTheUnboundMultipartUpload() throws Exception {
         when(storage.createMultipartUpload(anyString(), anyString())).thenReturn("store-upload");
         doThrow(new IllegalStateException("database down")).when(assets).insertUploading(any(), anyString(), any(),
-                anyString(), anyString(), anyLong(), anyString(), anyString(), anyString(), anyLong(), anyInt(), anyInt(), anyString());
+                anyString(), anyString(), anyLong(), anyString(), anyString(), anyString(), anyLong(), anyInt(), anyInt(), anyString(), any(), any());
         assertThatThrownBy(() -> service.start(new MediaUploadService.StartUpload(null, "clip.mp4", "video/mp4", 10, null), "admin"))
                 .hasMessageContaining("database down");
         verify(storage).abortMultipartUpload(anyString(), eq("store-upload"));
@@ -68,6 +68,6 @@ class MediaUploadValidationTest {
     private MediaAssetStore.AssetRow asset(Instant expiry) {
         return new MediaAssetStore.AssetRow(id, "VIDEO", "UPLOADING", null, "clip.mp4", "video/mp4", 10,
                 "upload", "store-upload", "source", 5L, 2, expiry, 0, null, "v1", null, null, null,
-                Instant.now(), Instant.now(), null, "", 0, null);
+                Instant.now(), Instant.now(), null, "", 0, null, "AVAILABLE", null, null, null, null, null, null);
     }
 }

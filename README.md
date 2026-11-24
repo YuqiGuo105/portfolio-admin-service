@@ -203,6 +203,53 @@ MCP upload receipts omit temporary signed URLs; renew them using the same upload
 session, not a new upload. Deploy this API and migration before the gateway's
 `media.*` catalog. No public MCP media-management tools are exposed.
 
+**Remove an active video original (V17).** This is separate from the asset soft-delete above:
+it removes only the exact source object in `MEDIA_ORIGINALS_BUCKET`, not the asset, public HLS/MP4,
+poster, renditions, manifest, publication pointers or usages. Used videos are allowed. Only a live
+`READY` VIDEO with a valid processed manifest, verified source ownership and no PENDING/RUNNING
+jobs is eligible. UPLOADING, PROCESSING, FAILED and IMAGE assets are blocked. Re-transcoding from
+that original is lost; there is no undo in the UI. Keep an independent copy or upload a new asset.
+
+- ADMIN-only `GET /api/admin/media/{id}/original-deletion-check` returns
+  `{id, metadataVersion, deletable, reasons: string[], originalStatus}`.
+- ADMIN-only `DELETE /api/admin/media/{id}/original?expectedVersion=N` returns the fresh `AssetView`.
+  Its new fields are `originalStatus` (`AVAILABLE`, `DELETING`, `DELETE_FAILED`, `DELETED`) and nullable
+  `originalDeletedAt`. The asset itself remains READY. Errors: 400 invalid/missing version, 401/403
+  authorization, 404 missing asset, 409 stale metadata/ineligible asset, 503 storage not confirmed.
+- Check reason codes: `not_video`, `asset_deleted`, `not_ready`, `active_jobs`,
+  `invalid_playable_manifest`, `original_storage_unverified`, `original_deleted`.
+- A durable, audited intent pins the endpoint, bucket, key and GCS object generation before DELETE. The
+  signed `x-goog-if-generation-match` precondition prevents deleting a replacement at the same key;
+  retries never adopt a new generation. HEAD must confirm the live object is absent before the
+  database records DELETED. New/reopened processing is fenced once an intent is accepted.
+- New uploads record their endpoint/bucket at allocation and generation at completion. Existing
+  rows are not bulk-backfilled from current configuration. A legacy row can become eligible only
+  when its exact owned object exists in the separate configured originals bucket and HEAD matches
+  the persisted `source_etag` and `source_bytes` receipt. GET verifies without writing; DELETE
+  re-verifies and audits the endpoint/bucket/generation binding in its intent transaction. Missing
+  objects/receipts, partial bindings, mismatches or a changed configured location fail closed.
+  Upload sessions started before V17 retain null bindings at completion and use this same verified path.
+- Retry manually after a timeout/503, including crash-left DELETING. Use the original accepted
+  `expectedVersion` or the current version from GET. A completed duplicate returns the asset without
+  another storage delete. No polling, automatic deletion sweeper or idempotency header is required.
+  A changed storage generation needs operator investigation; retry cannot remove the replacement.
+  Asset soft-delete is blocked while original deletion is DELETING or DELETE_FAILED, so an
+  unresolved operation cannot be hidden or lose its reconciliation path.
+- This implementation requires [GCS generation preconditions](https://docs.cloud.google.com/storage/docs/xml-api/delete-object);
+  unsupported S3-compatible deletion semantics and S3 version IDs fail closed. `MEDIA_ORIGINALS_BUCKET` must be private and distinct
+  from `MEDIA_PUBLIC_BUCKET`. No policy/IAM changes or public-bucket deletes are performed.
+  DELETED means the active object is absent, not that provider-retained bytes were purged. GCS
+  [soft-delete/retention](https://docs.cloud.google.com/storage/docs/soft-delete) can retain recoverable, billable data after removal; verify the bucket policy
+  separately. This API does not bypass retention, purge historical versions or guarantee immediate
+  billing reduction. Existing asset soft-delete remains compatible and still retains stored files.
+
+Focused verification against a disposable local database (never a production JDBC URL):
+`mvn -o -Pmedia-e2e -pl admin-service -Dtest=MediaOriginalDeletionEndToEndTest,MediaOriginalDeletionTest,OriginalsStoreDeletionTest,MediaUploadFlowTest test`.
+Set `MEDIA_TEST_JDBC_URL` and `MEDIA_TEST_JDBC_USER` for that database and put `ffmpeg`/`ffprobe`
+on PATH. The original-deletion E2E generates and uploads its own video, runs the real worker through
+READY, removes only its in-memory private source, and decodes HTTP HLS/MP4 again afterward. It does
+not contact production storage; unlike optional broader harnesses, missing FFmpeg fails this test.
+
 **Tests.** `MEDIA_TEST_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/<name>_test mvn verify` runs the
 failure-rule tests against a real PostgreSQL, each class in its own throwaway schema. The
 end-to-end tests also need `ffmpeg`, `ffprobe`, `vips` and `vipsheader` on the `PATH` and are skipped
